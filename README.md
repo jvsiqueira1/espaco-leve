@@ -6,23 +6,22 @@ Aplicativo de manutenção de armazenamento para **Windows, macOS e Linux**. Ide
 
 ## Como usar
 
-1. Baixe o pacote do seu sistema em [Releases](https://github.com/jvsiqueira1/espaco-leve/releases).
-2. No Windows, baixe diretamente **EspacoLeve-VERSÃO-win-x64.exe**, salve em uma pasta permanente e abra. O ZIP também está disponível. Nos demais sistemas, extraia o pacote; no macOS, mova **Espaço Leve.app** para Aplicativos.
-3. Abra **EspacoLeve.exe**, **Espaço Leve.app** ou **EspacoLeve**, conforme o sistema.
+1. Baixe o instalador do seu sistema em [Releases](https://github.com/jvsiqueira1/espaco-leve/releases).
+2. No Windows, salve **EspacoLeve-VERSÃO-win-x64.exe** em uma pasta permanente e abra. No macOS, abra **EspacoLeve-VERSÃO-osx-arm64.dmg** (Apple Silicon) ou **EspacoLeve-VERSÃO-osx-x64.dmg** (Intel) e arraste **Espaço Leve.app** para **Aplicativos**. No Linux, extraia **EspacoLeve-VERSÃO-linux-x64.tar.gz** em uma pasta permanente.
+3. Abra **EspacoLeve.exe**, **Espaço Leve** em Aplicativos ou **EspacoLeve**, conforme o sistema.
 4. Use **Analisar espaço**. A análise não remove arquivos e pode ser cancelada.
 5. Confira as recomendações e as categorias habilitadas em **Configurações**.
 
-Os pacotes e o executável Windows incluem o runtime .NET. Não é necessário instalar SDK, Node.js ou Python para abrir o programa. As ferramentas opcionais precisam estar instaladas para que seus próprios caches sejam identificados.
+Todos os pacotes incluem o runtime .NET. Não é necessário instalar SDK, Node.js ou Python para abrir o programa. As ferramentas opcionais precisam estar instaladas para que seus próprios caches sejam identificados.
 
 | Pacote | Plataforma |
 |---|---|
-| win-x64.exe | Windows 10/11, x64 — download direto, sem extrair ZIP ou instalar .NET |
-| win-x64.zip | Windows 10/11, x64 |
-| osx-arm64.zip | macOS, Apple Silicon |
-| osx-x64.zip | macOS, Intel |
+| win-x64.exe | Windows 10/11, x64 — executável único, sem instalar .NET |
+| osx-arm64.dmg | macOS 14 ou posterior, Apple Silicon |
+| osx-x64.dmg | macOS 14 ou posterior, Intel |
 | linux-x64.tar.gz | Linux, x64, glibc e ambiente gráfico |
 
-As versões iniciais para Windows não possuem assinatura de editor. No macOS, o pacote recebe assinatura ad hoc para execução, mas ainda não possui assinatura Developer ID ou notarização Apple; o Gatekeeper pode exigir autorização em Privacidade e Segurança. Os pacotes incluem somas SHA-256 na release.
+As versões iniciais para Windows não possuem assinatura de editor. No macOS, o aplicativo recebe assinatura ad hoc para execução, mas ainda não possui assinatura Developer ID ou notarização Apple; o Gatekeeper pode exigir autorização em Privacidade e Segurança. A release inclui somas SHA-256 dos pacotes em SHA256SUMS.txt. Os anexos "Source code" são gerados automaticamente pelo GitHub em toda release.
 
 No Linux, são necessárias bibliotecas do ambiente gráfico, como libX11, libICE, libSM e fontconfig. A bandeja depende do suporte do ambiente desktop. Para manter o aplicativo acessível mesmo em ambientes sem bandeja, fechar a janela no Linux encerra o programa; minimize a janela para manter a rotina ativa. Windows e macOS mantêm o app na bandeja ao fechar.
 
@@ -88,8 +87,9 @@ Configuração inválida é preservada em cópia e pausa a rotina. A inicializa�
 Para produzir um pacote na própria plataforma:
 
     pwsh scripts/package.ps1 -Version 1.0.0 -Runtime win-x64
+    pwsh scripts/package.ps1 -Version 1.0.0 -Runtime osx-arm64
 
-Use osx-arm64, osx-x64 ou linux-x64 no host correspondente. Não publique auxiliares nativos de uma plataforma dentro de pacotes de outra.
+O resultado fica em artifacts/release. No macOS é gerada a imagem de disco (.dmg), montada e testada antes de concluir; no Linux, o .tar.gz. Use osx-x64 ou linux-x64 no host correspondente. Não publique auxiliares nativos de uma plataforma dentro de pacotes de outra.
 
 Opções de diagnóstico:
 
@@ -111,14 +111,14 @@ O [semantic-release](https://semantic-release.org/) analisa os commits do main:
 | Corpo com BREAKING CHANGE: descrição | Major, por exemplo 1.2.3 → 2.0.0 |
 | docs:, chore:, test:, ci:, refactor: | Sem release, salvo mudança incompatível |
 
-O GitHub Actions verifica testes e páginas da interface em Windows, Linux e macOS Intel/Apple Silicon. Depois, calcula a próxima versão, compila os quatro pacotes e o executável Windows com essa versão e só então cria a tag, as notas e os anexos no GitHub Releases. O executável Windows é testado isoladamente, sem DLLs ao lado, antes de ser anexado. Uma falha de teste ou pacote impede a publicação.
+O GitHub Actions verifica testes e páginas da interface em Windows, Linux e macOS Intel/Apple Silicon. Depois, calcula a próxima versão, compila os quatro instaladores com essa versão e só então cria a tag, as notas e os anexos no GitHub Releases: o .exe Windows, os .dmg macOS para Apple Silicon e Intel, o .tar.gz Linux e SHA256SUMS.txt. O executável Windows é testado isoladamente, sem DLLs ao lado, e cada .dmg é verificado, montado e testado antes de ser anexado. A publicação é recusada se faltar um instalador ou houver anexo extra. Uma falha de teste ou pacote impede a publicação.
 
 Não publica no npm, não cria commits automáticos e não acrescenta Co-authored-by. O número no código-fonte é 0.0.0 de desenvolvimento; a versão distribuída é injetada na compilação a partir do semantic-release.
 
     npm ci
     npm test
 
-O workflow usa o GITHUB_TOKEN temporário fornecido pelo GitHub com permissão de escrita em conteúdo somente nos passos de planejamento/publicação. Não precisa cadastrar token npm ou PAT. Execuções de pull requests apenas verificam o código.
+O workflow usa o GITHUB_TOKEN temporário fornecido pelo GitHub com permissão de escrita em conteúdo somente nos passos de planejamento/publicação. Não precisa cadastrar token npm ou PAT. Execuções de pull requests verificam o código e geram os pacotes com a versão 0.0.0, sem publicar; eles ficam disponíveis como artefatos do workflow.
 
 ## Organização
 

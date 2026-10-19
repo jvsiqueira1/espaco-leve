@@ -10,3 +10,4 @@ artifacts/
 .DS_Store
 *.log
 node_modules/
+.claude/settings.local.json

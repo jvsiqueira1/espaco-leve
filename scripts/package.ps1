@@ -39,25 +39,14 @@ if (!$IsWindows) {
     $guardName = if ($IsMacOS) { 'libespacoleve_native.dylib' } else { 'libespacoleve_native.so' }
     if (!(Test-Path -LiteralPath (Join-Path $publishDirectory $guardName))) { throw 'Proteção nativa ausente no pacote.' }
 }
-Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $publishDirectory
 if ($Runtime.StartsWith('osx-')) {
-    $bundle = Join-Path $projectRoot "artifacts/bundle/$Runtime/Espaço Leve.app"
-    $macosDirectory = Join-Path $bundle 'Contents/MacOS'
-    New-Item -ItemType Directory -Path $macosDirectory -Force | Out-Null
-    Copy-Item -Path (Join-Path $publishDirectory '*') -Destination $macosDirectory -Recurse -Force
-    $plist = '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>io.github.jvsiqueira1.espaco-leve</string><key>CFBundleName</key><string>Espaço Leve</string><key>CFBundleDisplayName</key><string>Espaço Leve</string><key>CFBundleExecutable</key><string>EspacoLeve</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>' + $Version + '</string><key>CFBundleVersion</key><string>' + $Version + '</string><key>NSHighResolutionCapable</key><true/></dict></plist>'
-    [IO.File]::WriteAllText((Join-Path $bundle 'Contents/Info.plist'), $plist)
-    & chmod +x (Join-Path $macosDirectory 'EspacoLeve')
-    if ($LASTEXITCODE -ne 0) { throw 'Não foi possível preparar o executável.' }
-    & codesign --force --deep --sign - $bundle
-    if ($LASTEXITCODE -ne 0) { throw 'Falha na assinatura ad hoc do aplicativo.' }
-    & ditto -c -k --sequesterRsrc --keepParent $bundle (Join-Path $releaseDirectory "EspacoLeve-$Version-$Runtime.zip")
-    if ($LASTEXITCODE -ne 0) { throw 'Falha ao criar o pacote macOS.' }
+    & sh (Join-Path $PSScriptRoot 'package-macos.sh') $publishDirectory $Version $Runtime $releaseDirectory
+    if ($LASTEXITCODE -ne 0) { throw 'Falha ao criar a imagem de disco macOS.' }
 } elseif ($Runtime.StartsWith('linux-')) {
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $publishDirectory
     & chmod +x (Join-Path $publishDirectory 'EspacoLeve')
     & tar -czf (Join-Path $releaseDirectory "EspacoLeve-$Version-$Runtime.tar.gz") -C $publishDirectory .
     if ($LASTEXITCODE -ne 0) { throw 'Falha ao criar o pacote Linux.' }
 } else {
     Copy-Item -LiteralPath (Join-Path $publishDirectory 'EspacoLeve.exe') -Destination (Join-Path $releaseDirectory "EspacoLeve-$Version-$Runtime.exe") -Force
-    Compress-Archive -LiteralPath @((Join-Path $publishDirectory 'EspacoLeve.exe'), (Join-Path $publishDirectory 'README.md')) -DestinationPath (Join-Path $releaseDirectory "EspacoLeve-$Version-$Runtime.zip") -Force
 }
