@@ -7,15 +7,16 @@ Aplicativo de manutenção de armazenamento para **Windows, macOS e Linux**. Ide
 ## Como usar
 
 1. Baixe o pacote do seu sistema em [Releases](https://github.com/jvsiqueira1/espaco-leve/releases).
-2. Extraia para uma pasta permanente. No macOS, mova **Espaço Leve.app** para Aplicativos.
+2. No Windows, baixe diretamente **EspacoLeve-VERSÃO-win-x64.exe**, salve em uma pasta permanente e abra. O ZIP também está disponível. Nos demais sistemas, extraia o pacote; no macOS, mova **Espaço Leve.app** para Aplicativos.
 3. Abra **EspacoLeve.exe**, **Espaço Leve.app** ou **EspacoLeve**, conforme o sistema.
 4. Use **Analisar espaço**. A análise não remove arquivos e pode ser cancelada.
 5. Confira as recomendações e as categorias habilitadas em **Configurações**.
 
-Os pacotes incluem o runtime .NET. Não é necessário instalar SDK, Node.js ou Python para abrir o programa. As ferramentas opcionais precisam estar instaladas para que seus próprios caches sejam identificados.
+Os pacotes e o executável Windows incluem o runtime .NET. Não é necessário instalar SDK, Node.js ou Python para abrir o programa. As ferramentas opcionais precisam estar instaladas para que seus próprios caches sejam identificados.
 
 | Pacote | Plataforma |
 |---|---|
+| win-x64.exe | Windows 10/11, x64 — download direto, sem extrair ZIP ou instalar .NET |
 | win-x64.zip | Windows 10/11, x64 |
 | osx-arm64.zip | macOS, Apple Silicon |
 | osx-x64.zip | macOS, Intel |
@@ -110,7 +111,7 @@ O [semantic-release](https://semantic-release.org/) analisa os commits do main:
 | Corpo com BREAKING CHANGE: descrição | Major, por exemplo 1.2.3 → 2.0.0 |
 | docs:, chore:, test:, ci:, refactor: | Sem release, salvo mudança incompatível |
 
-O GitHub Actions verifica testes e páginas da interface em Windows, Linux e macOS Intel/Apple Silicon. Depois, calcula a próxima versão, compila os quatro pacotes com essa versão e só então cria a tag, as notas e os anexos no GitHub Releases. Uma falha de teste ou pacote impede a publicação.
+O GitHub Actions verifica testes e páginas da interface em Windows, Linux e macOS Intel/Apple Silicon. Depois, calcula a próxima versão, compila os quatro pacotes e o executável Windows com essa versão e só então cria a tag, as notas e os anexos no GitHub Releases. O executável Windows é testado isoladamente, sem DLLs ao lado, antes de ser anexado. Uma falha de teste ou pacote impede a publicação.
 
 Não publica no npm, não cria commits automáticos e não acrescenta Co-authored-by. O número no código-fonte é 0.0.0 de desenvolvimento; a versão distribuída é injetada na compilação a partir do semantic-release.
 
