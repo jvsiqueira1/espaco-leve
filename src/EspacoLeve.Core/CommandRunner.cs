@@ -10,7 +10,7 @@ public sealed record CommandResult(int ExitCode, string Output, bool TimedOut = 
 
 public static class CommandRunner
 {
-    public static async Task<CommandResult> Run(string executable, IEnumerable<string> arguments, int seconds = 60, CancellationToken cancellation = default, bool killTree = false)
+    public static async Task<CommandResult> Run(string executable, IEnumerable<string> arguments, int seconds = 60, CancellationToken cancellation = default, bool killTree = false, IReadOnlyDictionary<string, string>? environment = null)
     {
         var start = new ProcessStartInfo(executable)
         {
@@ -20,6 +20,8 @@ public static class CommandRunner
         };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         start.Environment["NO_COLOR"] = "1";
+        if (environment is not null)
+            foreach (var (key, value) in environment) start.Environment[key] = value;
         try
         {
             using var process = new Process { StartInfo = start };

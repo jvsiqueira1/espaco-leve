@@ -73,7 +73,17 @@ public sealed class CleanupService(AppSettings settings)
             _ => throw new InvalidOperationException("Regra de revisão inválida.")
         };
         var tool = ToolCommand.Find(name) ?? throw new InvalidOperationException("Ferramenta não encontrada.");
-        var command = await tool.Run(args, 180, token);
+        if (rule.Kind == CleanupKind.PnpmStore)
+        {
+            var leaf = Path.GetFileName(Path.TrimEndingDirectorySeparator(rule.Root));
+            var storeBase = System.Text.RegularExpressions.Regex.IsMatch(leaf, @"^v\d+$") ? Path.GetDirectoryName(rule.Root)! : rule.Root;
+            var pinned = await tool.Run(["--store-dir", storeBase, "store", "path"], 15, token);
+            if (!pinned.Success || !string.Equals(pinned.Output.Trim(), rule.Root, PathGuard.Comparison))
+                throw new InvalidOperationException("Não foi possível fixar a pasta de cache do pnpm. Nada foi removido.");
+            args = ["--store-dir", storeBase, "store", "prune"];
+        }
+        var command = await tool.Run(args, 180, token,
+            rule.Kind == CleanupKind.GoCache ? new Dictionary<string, string> { ["GOCACHE"] = rule.Root } : null);
         var after = await Task.Run(() => SafeFiles.Scan(rule, DateTime.UtcNow, token).Bytes, token);
         return new() { Title = rule.Title, RemovedBytes = Math.Max(0, before - after), Success = command.Success,
             Message = command.Output.Length > 4000 ? command.Output[^4000..] : command.Output };

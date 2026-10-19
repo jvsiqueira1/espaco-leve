@@ -49,13 +49,28 @@ public sealed record PlatformContext(DesktopPlatform Platform, string Home, stri
 
 public sealed record ToolCommand(string Executable, IReadOnlyList<string> Prefix)
 {
-    public Task<CommandResult> Run(IEnumerable<string> args, int seconds = 20, CancellationToken token = default) =>
-        CommandRunner.Run(Executable, Prefix.Concat(args), seconds, token, killTree: true);
+    public Task<CommandResult> Run(IEnumerable<string> args, int seconds = 20, CancellationToken token = default, IReadOnlyDictionary<string, string>? environment = null) =>
+        CommandRunner.Run(Executable, Prefix.Concat(args), seconds, token, killTree: true, environment: environment);
 
     public static ToolCommand? Find(string name)
     {
         var direct = CommandRunner.Find(OperatingSystem.IsWindows() ? name + ".exe" : name);
         if (direct is not null) return new(direct, []);
+        if (name == "pnpm" && OperatingSystem.IsWindows())
+        {
+            var pnpmHome = Environment.GetEnvironmentVariable("PNPM_HOME") ??
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "pnpm");
+            // Standalone pnpm installs a shim pointing to its versioned native CLI.
+            foreach (var directory in new[] { pnpmHome, Path.Combine(pnpmHome, "bin") })
+            {
+                var shim = Path.Combine(directory, "pnpm.cmd");
+                if (!File.Exists(shim)) continue;
+                var match = System.Text.RegularExpressions.Regex.Match(File.ReadAllText(shim), "\"%~dp0(?<path>[^\"]+pnpm\\.exe)\"", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (!match.Success) continue;
+                var candidate = Path.GetFullPath(Path.Combine(directory, match.Groups["path"].Value.TrimStart('\\', '/')));
+                if (PathGuard.IsInside(pnpmHome, candidate) && File.Exists(candidate)) return new(candidate, []);
+            }
+        }
         if (name is "npm" or "pnpm")
         {
             var node = CommandRunner.Find(OperatingSystem.IsWindows() ? "node.exe" : "node");
@@ -68,6 +83,8 @@ public sealed record ToolCommand(string Executable, IReadOnlyList<string> Prefix
             {
                 var script = Path.Combine(dir, "node_modules", name, "bin", name == "npm" ? "npm-cli.js" : "pnpm.cjs");
                 if (File.Exists(script)) return new(node, [script]);
+                var corepack = Path.Combine(dir, "node_modules", "corepack", "dist", name + ".js");
+                if (File.Exists(corepack)) return new(node, [corepack]);
             }
         }
         if (name == "pip")
