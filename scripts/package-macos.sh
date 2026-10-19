@@ -28,14 +28,11 @@ app="$work/image/Espaço Leve.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp -R "$publish/." "$app/Contents/MacOS/"
 chmod +x "$app/Contents/MacOS/EspacoLeve"
-# The source icon is 64 px; larger slots are left for Finder to scale.
-for size in 16 32 64; do
-  sips -s format png -z "$size" "$size" "$base/assets/app.ico" --out "$work/icon-$size.png" >/dev/null || fail 'Falha ao converter o ícone do aplicativo.'
+for size in 16 32 128 256 512; do
+  sips -s format png -z "$size" "$size" "$base/assets/app.png" --out "$work/iconset.iconset/icon_${size}x${size}.png" >/dev/null || fail 'Falha ao converter o ícone do aplicativo.'
+  double=$((size * 2))
+  sips -s format png -z "$double" "$double" "$base/assets/app.png" --out "$work/iconset.iconset/icon_${size}x${size}@2x.png" >/dev/null || fail 'Falha ao converter o ícone do aplicativo.'
 done
-cp "$work/icon-16.png" "$work/iconset.iconset/icon_16x16.png"
-cp "$work/icon-32.png" "$work/iconset.iconset/icon_16x16@2x.png"
-cp "$work/icon-32.png" "$work/iconset.iconset/icon_32x32.png"
-cp "$work/icon-64.png" "$work/iconset.iconset/icon_32x32@2x.png"
 iconutil -c icns "$work/iconset.iconset" -o "$app/Contents/Resources/EspacoLeve.icns" || fail 'Falha ao gerar o ícone do aplicativo.'
 cat > "$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -50,7 +47,7 @@ cat > "$app/Contents/Info.plist" <<EOF
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundleVersion</key><string>$version</string>
-  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>

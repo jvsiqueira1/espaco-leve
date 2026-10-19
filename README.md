@@ -17,8 +17,8 @@ Todos os pacotes incluem o runtime .NET. Não é necessário instalar SDK, Node.
 | Pacote | Plataforma |
 |---|---|
 | win-x64.exe | Windows 10/11, x64 — executável único, sem instalar .NET |
-| osx-arm64.dmg | macOS 14 ou posterior, Apple Silicon |
-| osx-x64.dmg | macOS 14 ou posterior, Intel |
+| osx-arm64.dmg | macOS 15 ou posterior, Apple Silicon |
+| osx-x64.dmg | macOS 15 ou posterior, Intel |
 | linux-x64.tar.gz | Linux, x64, glibc e ambiente gráfico |
 
 As versões iniciais para Windows não possuem assinatura de editor. No macOS, o aplicativo recebe assinatura ad hoc para execução, mas ainda não possui assinatura Developer ID ou notarização Apple; o Gatekeeper pode exigir autorização em Privacidade e Segurança. A release inclui somas SHA-256 dos pacotes em SHA256SUMS.txt. Os anexos "Source code" são gerados automaticamente pelo GitHub em toda release.
@@ -99,6 +99,8 @@ Opções de diagnóstico:
     dotnet run --project src/EspacoLeve.App -- --render-preview preview.png
 
 Os dois últimos usam dados de demonstração, configuração isolada e nenhuma limpeza. Os testes de exclusão usam somente fixtures isoladas em work/tests; nunca diretórios reais do usuário.
+
+O ícone tem como fonte assets/app.svg; após editá-lo, `node scripts/render-icon.mjs` (requer rsvg-convert, do librsvg) regenera assets/app.png e assets/app.ico, que são versionados e usados pelo build.
 
 ## Versões com semantic-release
 
