@@ -16,7 +16,7 @@ public static class CommandRunner
         {
             UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true,
             RedirectStandardError = true, StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8, WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+            StandardErrorEncoding = Encoding.UTF8, WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
         };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         start.Environment["NO_COLOR"] = "1";
@@ -44,10 +44,13 @@ public static class CommandRunner
 
     public static string? Find(string executable)
     {
-        foreach (var item in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
+        var standard = OperatingSystem.IsMacOS() ? new[] { "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin" } :
+            OperatingSystem.IsLinux() ? new[] { "/usr/local/bin", "/usr/bin", "/bin" } : [];
+        foreach (var item in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Concat(standard))
         {
             try
             {
+                if (string.IsNullOrWhiteSpace(item) || !Path.IsPathFullyQualified(item.Trim('"'))) continue;
                 var candidate = Path.Combine(item.Trim('"'), executable);
                 if (File.Exists(candidate)) return Path.GetFullPath(candidate);
             }

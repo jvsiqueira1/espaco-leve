@@ -1,0 +1,23 @@
+{
+  "name": "espaco-leve-release",
+  "version": "0.0.0-development",
+  "private": true,
+  "type": "module",
+  "description": "Ferramentas de publicação do aplicativo desktop Espaço Leve",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jvsiqueira1/espaco-leve.git"
+  },
+  "engines": { "node": ">=24.10.0" },
+  "scripts": {
+    "test": "node --test scripts/release.test.mjs",
+    "release": "semantic-release",
+    "release:plan": "node scripts/plan-release.mjs"
+  },
+  "devDependencies": {
+    "@semantic-release/commit-analyzer": "13.0.1",
+    "@semantic-release/github": "12.0.10",
+    "@semantic-release/release-notes-generator": "14.1.1",
+    "semantic-release": "25.0.9"
+  }
+}

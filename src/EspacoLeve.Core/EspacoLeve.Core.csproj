@@ -1,8 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>EspacoLeve.Core</AssemblyName>
   </PropertyGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <None Include="../../native/libespacoleve_native.so" Link="libespacoleve_native.so" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <None Include="../../native/libespacoleve_native.dylib" Link="libespacoleve_native.dylib" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="BuildUnixGuard" BeforeTargets="PrepareForBuild" Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+    <Exec Command="sh &quot;$(MSBuildProjectDirectory)/../../scripts/build-native.sh&quot;" />
+  </Target>
 </Project>

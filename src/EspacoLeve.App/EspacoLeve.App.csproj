@@ -1,18 +1,21 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
-    <UseWindowsForms>true</UseWindowsForms>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>EspacoLeve</AssemblyName>
     <RootNamespace>EspacoLeve.App</RootNamespace>
     <ApplicationIcon>../../assets/app.ico</ApplicationIcon>
-    <Version>1.0.0</Version>
+    <Version>0.0.0</Version>
     <Product>Espaço Leve</Product>
     <Description>Manutenção de armazenamento com limpeza segura e revisão.</Description>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../EspacoLeve.Core/EspacoLeve.Core.csproj" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.4" />
+    <AvaloniaResource Include="../../assets/app.ico" Link="Assets/app.ico" />
   </ItemGroup>
 </Project>

@@ -4,3 +4,9 @@ work/
 build/
 .vs/
 *.user
+native/*.so
+native/*.dylib
+artifacts/
+.DS_Store
+*.log
+node_modules/

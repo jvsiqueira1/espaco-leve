@@ -1,0 +1,139 @@
+name: Verify and Release
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Test ${{ matrix.rid }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-15-intel
+            rid: osx-x64
+          - os: macos-15
+            rid: osx-arm64
+          - os: ubuntu-24.04
+            rid: linux-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Build and safety tests
+        run: |
+          dotnet build EspacoLeve.sln -c Release --warnaserror
+          dotnet run --project tests/EspacoLeve.Tests -c Release --no-build
+      - name: Install Linux display dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb libx11-6 libice6 libsm6 libfontconfig1 libgl1
+      - name: Smoke test desktop pages (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a dotnet src/EspacoLeve.App/bin/Release/net10.0/EspacoLeve.dll --smoke-test
+      - name: Smoke test desktop pages
+        if: runner.os != 'Linux'
+        shell: pwsh
+        run: |
+          & dotnet src/EspacoLeve.App/bin/Release/net10.0/EspacoLeve.dll --smoke-test
+          if ($LASTEXITCODE -ne 0) { throw 'A interface não passou na verificação.' }
+
+  plan:
+    needs: verify
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - id: plan
+        run: npm run release:plan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  package:
+    needs: plan
+    if: needs.plan.outputs.version != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-15-intel
+            rid: osx-x64
+          - os: macos-15
+            rid: osx-arm64
+          - os: ubuntu-24.04
+            rid: linux-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Build versioned package
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          RELEASE_RUNTIME: ${{ matrix.rid }}
+        run: ./scripts/package.ps1 -Version $env:RELEASE_VERSION -Runtime $env:RELEASE_RUNTIME
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package-${{ matrix.rid }}
+          path: artifacts/release/*
+          if-no-files-found: error
+
+  release:
+    needs: [plan, package]
+    if: needs.plan.outputs.version != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: package-*
+          path: artifacts/release
+          merge-multiple: true
+      - run: npm ci
+      - run: npm run release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_VERSION: ${{ needs.plan.outputs.version }}

@@ -5,16 +5,18 @@ namespace EspacoLeve.Core;
 
 public static class PathGuard
 {
+    // Unix volumes may be case sensitive, including macOS volumes.
+    public static StringComparison Comparison => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
     public static bool IsInside(string root, string candidate)
     {
         var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         var fullPath = Path.GetFullPath(candidate);
-        return fullPath.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        return fullPath.StartsWith(Path.EndsInDirectorySeparator(fullRoot) ? fullRoot : fullRoot + Path.DirectorySeparatorChar, Comparison);
     }
 
     public static bool IsOrdinaryPath(string root, string candidate, bool includeLeaf = true)
     {
-        if (!IsInside(root, candidate) && !string.Equals(Path.GetFullPath(root), Path.GetFullPath(candidate), StringComparison.OrdinalIgnoreCase))
+        if (!IsInside(root, candidate) && !string.Equals(Path.GetFullPath(root), Path.GetFullPath(candidate), Comparison))
             return false;
         var path = includeLeaf ? Path.GetFullPath(candidate) : Path.GetDirectoryName(Path.GetFullPath(candidate))!;
         // Inspect every ancestor, including the root's parents. Do not follow junctions.
@@ -56,9 +58,13 @@ public static class SafeFiles
     {
         long bytes = 0;
         int count = 0, skipped = 0;
+        int visited = 0;
+        bool partial = false;
+        var started = System.Diagnostics.Stopwatch.StartNew();
         if (rule.Root is null || !Directory.Exists(rule.Root)) return new(rule, 0, 0, 0, "Não encontrado");
         foreach (var info in EnumerateInfo(rule.Root, () => skipped++, cancellation))
         {
+            if (++visited > 250_000 || started.Elapsed > TimeSpan.FromSeconds(45)) { partial = true; break; }
             try
             {
                 if (rule.Kind == CleanupKind.OldFiles && !Eligible(rule, info, utcNow)) continue;
@@ -67,7 +73,9 @@ public static class SafeFiles
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { skipped++; }
         }
-        return new(rule, bytes, count, skipped, count == 0 ? "Nada a limpar" : rule.Automatic ? "Pode limpar automaticamente" : "Requer revisão");
+        return new(rule, bytes, count, skipped, partial ? "Estimativa parcial; limite de tempo ou arquivos atingido" :
+            count == 0 ? "Nada a limpar" : rule.Kind == CleanupKind.InspectOnly ? "Somente análise; revisão manual" :
+            rule.Automatic ? "Pode limpar automaticamente" : "Requer revisão");
     }
 
     public static IEnumerable<string> Enumerate(string root, Action skipped, CancellationToken cancellation) =>
@@ -96,7 +104,11 @@ public static class SafeFiles
                 try { attrs = entry.Attributes; }
                 catch { skipped(); continue; }
                 if ((attrs & FileAttributes.ReparsePoint) != 0) { skipped(); continue; }
-                if ((attrs & FileAttributes.Directory) != 0) folders.Push(entry.FullName);
+                if ((attrs & FileAttributes.Directory) != 0)
+                {
+                    if (!entry.Name.StartsWith(".espaco-leve-recovery-", StringComparison.Ordinal))
+                        folders.Push(entry.FullName);
+                }
                 else if (entry is FileInfo file && PathGuard.IsInside(root, entry.FullName)) yield return file;
             }
         }
@@ -129,15 +141,26 @@ public static class SafeFiles
                 { result.RemovedBytes += bytes; result.RemovedFiles++; }
                 else result.Skipped++;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { result.Skipped++; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                result.Skipped++;
+                if (ex.Message.Contains(".espaco-leve-recovery-", StringComparison.Ordinal))
+                { result.Success = false; result.Message = ex.Message; }
+            }
         }
-        result.Message = $"{result.RemovedFiles} arquivos removidos; {result.Skipped} itens ignorados por proteção, acesso ou uso.";
+        result.Message += $" {result.RemovedFiles} arquivos removidos; {result.Skipped} itens ignorados por proteção, acesso ou uso.";
         // No recursive directory deletion, ownership changes, unlocking or elevation.
         return result;
     }
 
     static bool TryDeleteOldFile(string root, string path, DateTime cutoff, out long bytes)
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            var status = UnixDeleteOld(root, Path.GetRelativePath(root, path), new DateTimeOffset(cutoff, TimeSpan.Zero).ToUnixTimeSeconds(), out bytes);
+            if (status == -2) throw new IOException("Um arquivo mudou durante a limpeza e foi preservado em .espaco-leve-recovery-* na pasta analisada.");
+            return status == 1;
+        }
         bytes = 0;
         const uint Delete = 0x00010000, ReadAttributes = 0x80, OpenExisting = 3, OpenReparsePoint = 0x00200000;
         using var handle = CreateFileW(path, Delete | ReadAttributes, 0, IntPtr.Zero, OpenExisting, OpenReparsePoint, IntPtr.Zero);
@@ -183,4 +206,7 @@ public static class SafeFiles
     static extern bool SetFileInformationByHandle(SafeFileHandle handle, int informationClass, ref Disposition information, uint size);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern uint GetFinalPathNameByHandleW(SafeFileHandle handle, System.Text.StringBuilder path, uint length, uint flags);
+    [DllImport("espacoleve_native", EntryPoint = "el_delete_old")]
+    static extern int UnixDeleteOld([MarshalAs(UnmanagedType.LPUTF8Str)] string root,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string relative, long cutoff, out long bytes);
 }

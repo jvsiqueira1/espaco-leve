@@ -3,12 +3,15 @@ using System.Text.Json;
 
 namespace EspacoLeve.Core;
 
-public enum CleanupKind { OldFiles, NpmCache, PnpmStore, PipCache, DockerCache, DockerCompact, WindowsStorage }
+public enum CleanupKind { OldFiles, NpmCache, PnpmStore, PipCache, UvCache, GoCache, DockerCache, InspectOnly, SystemStorage }
 
 public sealed record CleanupRule(string Id, string Title, string Description, CleanupKind Kind,
     string? Root, bool Automatic, int RetentionDays = 0, string[]? FilePrefixes = null);
 
-public sealed record ScanRow(CleanupRule Rule, long Bytes, int Files, int Skipped, string Status);
+public sealed record ScanRow(CleanupRule Rule, long Bytes, int Files, int Skipped, string Status)
+{
+    public bool EstimateOnly => Rule.Kind != CleanupKind.OldFiles;
+}
 
 public sealed class CleanupResult
 {
@@ -32,7 +35,7 @@ public sealed class HistoryEntry
 public sealed class AppSettings
 {
     public bool AutomaticEnabled { get; set; } = true;
-    public bool StartWithWindows { get; set; } = true;
+    public bool StartAtLogin { get; set; }
     public DayOfWeek ScheduleDay { get; set; } = DayOfWeek.Friday;
     public int ScheduleHour { get; set; } = 16;
     public int ScheduleMinute { get; set; } = 30;
@@ -41,8 +44,8 @@ public sealed class AppSettings
     public DateTimeOffset? LastAttemptUtc { get; set; }
     public bool TempEnabled { get; set; } = true;
     public bool NpmLogsEnabled { get; set; } = true;
-    public bool AnyViewerLogsEnabled { get; set; } = true;
     public bool DockerCacheEnabled { get; set; } = true;
+    public List<string> DisabledRules { get; set; } = [];
     public int TempRetentionDays { get; set; } = 14;
     public int LogRetentionDays { get; set; } = 30;
     public DateTimeOffset? LastLowSpaceAlertUtc { get; set; }
@@ -55,6 +58,7 @@ public sealed class AppSettings
         ScheduleMinute = Math.Clamp(ScheduleMinute, 0, 59);
         TempRetentionDays = Math.Clamp(TempRetentionDays, 7, 90);
         LogRetentionDays = Math.Clamp(LogRetentionDays, 14, 180);
+        DisabledRules ??= [];
         try { _ = TimeZoneInfo.FindSystemTimeZoneById(TimeZoneId); }
         catch { TimeZoneId = TimeZoneInfo.Local.Id; }
         if (NextRunUtc == default) NextRunUtc = Schedule.Next(DateTimeOffset.UtcNow, this);
@@ -80,7 +84,7 @@ public sealed class DataStore
     public string DirectoryPath { get; }
     public DataStore(string? directory = null)
     {
-        DirectoryPath = directory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EspacoLeve");
+        DirectoryPath = directory ?? PlatformContext.Current.StateDirectory;
         Directory.CreateDirectory(DirectoryPath);
     }
     static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };

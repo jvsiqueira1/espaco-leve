@@ -1,63 +1,130 @@
 # Espaço Leve
 
-Aplicativo nativo de bandeja para Windows, feito em C# e Windows Forms. A rotina semanal é executada pelo próprio aplicativo, sem depender de um chat ou de um serviço externo.
+[![Verify and Release](https://github.com/jvsiqueira1/espaco-leve/actions/workflows/verify-and-release.yml/badge.svg)](https://github.com/jvsiqueira1/espaco-leve/actions/workflows/verify-and-release.yml)
 
-## Funcionamento
+Aplicativo de manutenção de armazenamento para **Windows, macOS e Linux**. Identifica caches e arquivos antigos, explica o que cada limpeza afeta e mantém uma rotina semanal na bandeja.
 
-- O botão **Analisar espaço** mostra estimativas sem remover arquivos.
-- **Limpar itens seguros** executa as regras automáticas habilitadas.
-- A página **Revisar** pede confirmação antes de limpar caches de pacotes ou compactar o Docker.
-- Fechar a janela mantém o aplicativo na bandeja. O menu da bandeja permite abrir o painel, pausar a rotina ou sair.
-- O horário inicial é sexta-feira, 16h30, no fuso do computador. Se o computador estiver desligado, a rotina pendente é executada quando o app voltar a abrir.
-- O histórico mantém as últimas 100 execuções.
+## Como usar
 
-## Regras iniciais
+1. Baixe o pacote do seu sistema em [Releases](https://github.com/jvsiqueira1/espaco-leve/releases).
+2. Extraia para uma pasta permanente. No macOS, mova **Espaço Leve.app** para Aplicativos.
+3. Abra **EspacoLeve.exe**, **Espaço Leve.app** ou **EspacoLeve**, conforme o sistema.
+4. Use **Analisar espaço**. A análise não remove arquivos e pode ser cancelada.
+5. Confira as recomendações e as categorias habilitadas em **Configurações**.
 
-| Item | Tratamento |
+Os pacotes incluem o runtime .NET. Não é necessário instalar SDK, Node.js ou Python para abrir o programa. As ferramentas opcionais precisam estar instaladas para que seus próprios caches sejam identificados.
+
+| Pacote | Plataforma |
 |---|---|
-| Temporários do usuário | Automático; criação e última alteração anteriores a 14 dias |
-| Logs do npm | Automático; anteriores a 30 dias |
-| Logs avcore.txt do AnyViewer | Automático; anteriores a 30 dias |
-| Cache de compilação do Docker | Automático; somente cache sem uso há mais de 7 dias, pelo comando oficial |
-| Cache npm, pacotes não utilizados do pnpm e cache pip | Revisão e confirmação |
-| Compactação do Docker | Revisão; exige containers e builds parados |
-| Limpeza de sistema, atualizações e lixeira | Revisão nas configurações do Windows |
+| win-x64.zip | Windows 10/11, x64 |
+| osx-arm64.zip | macOS, Apple Silicon |
+| osx-x64.zip | macOS, Intel |
+| linux-x64.tar.gz | Linux, x64, glibc e ambiente gráfico |
 
-O app não faz limpeza nas pastas Documentos, Downloads, projetos, node_modules ou perfis de navegador. Imagens e volumes do Docker são preservados. Não faz limpeza de Registro nem tenta liberar arquivos bloqueados.
+As versões iniciais para Windows não possuem assinatura de editor. No macOS, o pacote recebe assinatura ad hoc para execução, mas ainda não possui assinatura Developer ID ou notarização Apple; o Gatekeeper pode exigir autorização em Privacidade e Segurança. Os pacotes incluem somas SHA-256 na release.
 
-Na limpeza de temporários, bancos de dados, discos virtuais, arquivos de recuperação, arquivos somente leitura e hard links são preservados. Links simbólicos e junctions não são percorridos. Cada remoção valida novamente a idade e o caminho real pelo identificador do arquivo, e exige acesso exclusivo. Não há exclusão recursiva de pastas.
+No Linux, são necessárias bibliotecas do ambiente gráfico, como libX11, libICE, libSM e fontconfig. A bandeja depende do suporte do ambiente desktop. Para manter o aplicativo acessível mesmo em ambientes sem bandeja, fechar a janela no Linux encerra o programa; minimize a janela para manter a rotina ativa. Windows e macOS mantêm o app na bandeja ao fechar.
 
-Os tamanhos de arquivos/cache removidos são registrados separadamente do tamanho do disco virtual do Docker. Excluir cache dentro do Docker não garante recuperação imediata do mesmo espaço no Windows. Imagens e bancos de dados podem crescer; a meta de cache de 5 GB configurada neste computador não é um limite total do Docker.
+## O que identifica
 
-A compactação usa a API oficial de discos virtuais do Windows. O app não força o encerramento do Docker ou de outras distribuições WSL. A manutenção preserva por renomeação apenas diretórios que contenham exclusivamente sockets temporários conhecidos, para contornar a falha de reinicialização AF_UNIX observada no Docker Desktop instalado.
+| Categoria | Ação |
+|---|---|
+| Temporários do usuário, Windows/macOS | Automático: criação e alteração anteriores a 14 dias; proteções adicionais |
+| Logs do npm | Automático: anteriores a 30 dias |
+| Logs específicos do AnyViewer, se encontrado no Windows | Automático: apenas nomes avcore.txt antigos e acessíveis |
+| Cache Docker local, builder padrão | Automático: somente cache sem uso há 7 dias |
+| npm, pnpm, pip, uv e Go | Consulta a ferramenta para descobrir a pasta; limpeza oficial após confirmação |
+| Cache do Chrome/Edge, perfil padrão | Estimativa e abertura da pasta para revisão manual |
+| Miniaturas no Linux, Homebrew no macOS | Estimativa e revisão manual |
+| Downloads e lixeira do usuário no macOS/Linux | Tamanho total para revisão; nunca apagados pelo app |
+| Armazenamento do sistema | Abre ferramentas do Windows/macOS ou a pasta pessoal no Linux |
 
-## Instalação neste computador
+Só aparecem os locais encontrados. Caches personalizados são aceitos apenas em pastas dedicadas dentro do perfil/cache do usuário; caminhos compartilhados, pastas pessoais protegidas e links são recusados. O programa não busca indiscriminadamente em todos os discos nem adiciona pastas arbitrárias à limpeza.
 
-O executável publicado suporta --install. A instalação é somente para o usuário atual:
+Os tamanhos são estimativas lógicas. Podem se sobrepor, incluir arquivos que não serão removidos ou diferir do espaço efetivamente recuperado. Uma análise tem limite de 250 mil arquivos ou 45 segundos por categoria e identifica resultados parciais. A soma de arquivos elegíveis exclui Docker e itens de revisão.
 
-- Programa: %LOCALAPPDATA%\Programs\EspacoLeve\EspacoLeve.exe
-- Configuração e histórico: %LOCALAPPDATA%\EspacoLeve
-- Atalho no menu Iniciar: **Espaço Leve**
-- Inicialização: HKCU\Software\Microsoft\Windows\CurrentVersion\Run\EspacoLeve
+## Rotina semanal
 
-Para desativar a inicialização, desmarque **Iniciar com o Windows** nas configurações. Para interromper a rotina, pause a limpeza ou saia pelo ícone da bandeja.
+- Começa configurada para sexta-feira às 16h30 no fuso detectado. Dia, horário, retenção e categorias são editáveis.
+- O app precisa estar em execução e o usuário conectado. Não liga o computador nem opera como serviço de sistema.
+- Uma execução perdida ocorre quando o app estiver aberto novamente; a próxima data é reservada antes da limpeza, evitando repetição contínua em caso de falha.
+- **Iniciar ao entrar no computador** é opcional e precisa ser habilitado depois de colocar o aplicativo em uma pasta permanente.
+- A rotina pode ser pausada no painel ou no menu da bandeja.
+- Histórico local das últimas 100 limpezas, com resultados e itens ignorados.
 
-A versão publicada usa o .NET Desktop Runtime 10, já instalado neste computador.
+Não há garantia de que o disco nunca ficará cheio: novos arquivos, imagens Docker, bases de dados e aplicativos podem continuar crescendo.
+
+## Proteções e limites
+
+O limpador de arquivos não apaga pastas recursivamente. Ignora links simbólicos, junctions, hard links, arquivos somente leitura e extensões de documentos, código, bancos de dados, credenciais e recuperação. Valida novamente idade e caminho na remoção.
+
+No Windows, a remoção usa o mesmo identificador de arquivo, com acesso exclusivo e validação do caminho real. No Linux/macOS, um auxiliar nativo abre os componentes do caminho sem seguir links, exige propriedade do usuário, verifica mtime/ctime e tenta um bloqueio cooperativo. O arquivo é movido para uma área privada antes da validação final e exclusão. Em uma disputa que impeça restauração segura, fica preservado em uma pasta **.espaco-leve-recovery-*** dentro da raiz aprovada, para revisão. Essas pastas são ignoradas em limpezas posteriores.
+
+Bloqueios no Unix são cooperativos: programas que não os respeitam ainda podem escrever simultaneamente. Proteções de arquivo não substituem backups. Comandos de limpeza de pacotes seguem as regras das próprias ferramentas e exigem revisão; o aplicativo não aplica seu filtro de extensões ao conteúdo interno desses caches.
+
+Docker usa explicitamente um contexto local com socket Unix ou pipe Windows; contextos SSH/TCP são ignorados. Limpa apenas o builder padrão do daemon, sem remover imagens, containers ou volumes e sem iniciar/parar Docker Desktop. Builders buildx adicionais não são varridos. A limpeza interna pode não reduzir imediatamente o disco virtual. A compactação específica da primeira versão Windows não faz parte desta base multiplataforma.
+
+Não há limpeza de Registro, instalação de drivers, formatação, elevação de privilégios, telemetria ou envio de arquivos. Os comandos de ferramentas instaladas e a abertura dos aplicativos do sistema podem ter comportamento de rede próprio.
+
+## Dados locais
+
+| Sistema | Configuração e histórico |
+|---|---|
+| Windows | %LOCALAPPDATA%/EspacoLeve |
+| macOS | ~/Library/Application Support/EspacoLeve |
+| Linux | $XDG_STATE_HOME/espaco-leve, padrão ~/.local/state/espaco-leve |
+
+Configuração inválida é preservada em cópia e pausa a rotina. A inicialização usa o Registro do usuário no Windows, LaunchAgent no macOS e XDG autostart no Linux. Nenhum agendamento depende de chat ou conta externa.
 
 ## Desenvolvimento
 
-Pré-requisito: .NET SDK 10 no Windows.
+.NET SDK 10; no Linux/macOS também um compilador C (cc). Node.js 24.10+ é usado apenas no processo de publicação.
 
-    dotnet build src/EspacoLeve.App -c Release
+    dotnet build EspacoLeve.sln -c Release --warnaserror
     dotnet run --project tests/EspacoLeve.Tests -c Release
-    dotnet publish src/EspacoLeve.App -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o build/publish
+    dotnet run --project src/EspacoLeve.App -c Release
 
-Os testes criam somente dados isolados em work/tests, incluindo junctions e hard links para verificar a contenção da limpeza. Nenhum teste de exclusão usa os diretórios reais do usuário.
+Para produzir um pacote na própria plataforma:
 
-Para gerar prévias de todas as páginas, sem realizar limpeza nem registrar inicialização:
+    pwsh scripts/package.ps1 -Version 1.0.0 -Runtime win-x64
 
-    EspacoLeve.exe --render-preview caminho/preview.png
+Use osx-arm64, osx-x64 ou linux-x64 no host correspondente. Não publique auxiliares nativos de uma plataforma dentro de pacotes de outra.
 
-## Limitações
+Opções de diagnóstico:
 
-O app precisa estar em execução para cumprir a rotina. Não liga o computador e não executa enquanto o usuário estiver desconectado. Arquivos sem permissão são ignorados. A primeira análise completa dos caches pode levar alguns segundos; a rotina semanal faz apenas a varredura das áreas habilitadas. Limpar caches pode exigir novos downloads e deixar instalações futuras mais lentas.
+    dotnet run --project src/EspacoLeve.App -- --scan
+    dotnet run --project src/EspacoLeve.App -- --version
+    dotnet run --project src/EspacoLeve.App -- --smoke-test
+    dotnet run --project src/EspacoLeve.App -- --render-preview preview.png
+
+Os dois últimos usam dados de demonstração, configuração isolada e nenhuma limpeza. Os testes de exclusão usam somente fixtures isoladas em work/tests; nunca diretórios reais do usuário.
+
+## Versões com semantic-release
+
+O [semantic-release](https://semantic-release.org/) analisa os commits do main:
+
+| Commit | Efeito |
+|---|---|
+| fix: descrição | Patch, por exemplo 1.2.3 → 1.2.4 |
+| feat: descrição | Minor, por exemplo 1.2.3 → 1.3.0 |
+| Corpo com BREAKING CHANGE: descrição | Major, por exemplo 1.2.3 → 2.0.0 |
+| docs:, chore:, test:, ci:, refactor: | Sem release, salvo mudança incompatível |
+
+O GitHub Actions verifica testes e páginas da interface em Windows, Linux e macOS Intel/Apple Silicon. Depois, calcula a próxima versão, compila os quatro pacotes com essa versão e só então cria a tag, as notas e os anexos no GitHub Releases. Uma falha de teste ou pacote impede a publicação.
+
+Não publica no npm, não cria commits automáticos e não acrescenta Co-authored-by. O número no código-fonte é 0.0.0 de desenvolvimento; a versão distribuída é injetada na compilação a partir do semantic-release.
+
+    npm ci
+    npm test
+
+O workflow usa o GITHUB_TOKEN temporário fornecido pelo GitHub com permissão de escrita em conteúdo somente nos passos de planejamento/publicação. Não precisa cadastrar token npm ou PAT. Execuções de pull requests apenas verificam o código.
+
+## Organização
+
+- src/EspacoLeve.Core: descoberta por sistema, regras, proteção de arquivos, Docker, histórico e calendário.
+- src/EspacoLeve.App: interface Avalonia, bandeja e controle da execução.
+- native: proteção de exclusão Unix, compilada no host de destino.
+- tests: fixtures e verificações de contenção, retenção, links e configuração.
+- scripts e .github/workflows: pacotes, testes de versionamento e semantic-release.
+
+A versão Windows original está preservada no primeiro commit do repositório. O aplicativo multiplataforma não depende de usuário, nome da máquina, letra fixa de disco ou instalação específica do Docker.
