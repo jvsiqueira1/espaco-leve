@@ -1,0 +1,89 @@
+#!/bin/sh
+set -eu
+fail() { echo "$1" >&2; exit 1; }
+[ "$#" -eq 4 ] || fail 'Uso: package-macos.sh <publicação> <versão> <runtime> <saída>'
+publish="$1"; version="$2"; runtime="$3"; output="$4"
+case "$version" in *[!0-9.]*|.*|*.|*..*) fail 'Versão inválida.' ;; *.*.*.*) fail 'Versão inválida.' ;; *.*.*) ;; *) fail 'Versão inválida.' ;; esac
+case "$runtime" in osx-arm64|osx-x64) ;; *) fail 'Runtime macOS inválido.' ;; esac
+[ -f "$publish/EspacoLeve" ] || fail 'Executável ausente na publicação.'
+base="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+work="$base/work/package-macos/$runtime-$$"
+mount="$work/mount"
+mounted=0
+tested=0
+dmg="$output/EspacoLeve-$version-$runtime.dmg"
+cleanup() {
+  if [ "$mounted" -eq 1 ]; then
+    hdiutil detach "$mount" -quiet || hdiutil detach "$mount" -force -quiet || { echo "Imagem de disco ainda montada em $mount" >&2; return; }
+  fi
+  [ "$tested" -eq 1 ] || rm -f "$dmg"
+  rm -rf "$work"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+rm -rf "$work"
+mkdir -p "$work/iconset.iconset" "$work/image" "$output"
+
+app="$work/image/Espaço Leve.app"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+cp -R "$publish/." "$app/Contents/MacOS/"
+chmod +x "$app/Contents/MacOS/EspacoLeve"
+# The source icon is 64 px; larger slots are left for Finder to scale.
+for size in 16 32 64; do
+  sips -s format png -z "$size" "$size" "$base/assets/app.ico" --out "$work/icon-$size.png" >/dev/null || fail 'Falha ao converter o ícone do aplicativo.'
+done
+cp "$work/icon-16.png" "$work/iconset.iconset/icon_16x16.png"
+cp "$work/icon-32.png" "$work/iconset.iconset/icon_16x16@2x.png"
+cp "$work/icon-32.png" "$work/iconset.iconset/icon_32x32.png"
+cp "$work/icon-64.png" "$work/iconset.iconset/icon_32x32@2x.png"
+iconutil -c icns "$work/iconset.iconset" -o "$app/Contents/Resources/EspacoLeve.icns" || fail 'Falha ao gerar o ícone do aplicativo.'
+cat > "$app/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>io.github.jvsiqueira1.espaco-leve</string>
+  <key>CFBundleName</key><string>Espaço Leve</string>
+  <key>CFBundleDisplayName</key><string>Espaço Leve</string>
+  <key>CFBundleExecutable</key><string>EspacoLeve</string>
+  <key>CFBundleIconFile</key><string>EspacoLeve</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$version</string>
+  <key>CFBundleVersion</key><string>$version</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+EOF
+plutil -lint -s "$app/Contents/Info.plist" || fail 'Info.plist inválido.'
+codesign --force --deep --sign - "$app" || fail 'Falha na assinatura ad hoc do aplicativo.'
+codesign --verify --deep --strict "$app" || fail 'A assinatura do aplicativo não foi verificada.'
+ln -s /Applications "$work/image/Applications"
+
+rm -f "$dmg"
+# hdiutil occasionally reports a busy device on hosted runners.
+attempt=1
+until hdiutil create -volname 'Espaço Leve' -srcfolder "$work/image" -fs HFS+ -format UDZO -ov "$dmg" >/dev/null; do
+  [ "$attempt" -lt 3 ] || fail 'Falha ao criar a imagem de disco macOS.'
+  attempt=$((attempt + 1)); sleep 5
+done
+hdiutil verify -quiet "$dmg" || fail 'A imagem de disco macOS está corrompida.'
+
+mkdir -p "$mount"
+hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$mount" "$dmg" >/dev/null || fail 'Não foi possível montar a imagem de disco.'
+mounted=1
+[ -L "$mount/Applications" ] || fail 'Atalho para Aplicativos ausente na imagem de disco.'
+executable="$mount/Espaço Leve.app/Contents/MacOS/EspacoLeve"
+codesign --verify --deep --strict "$mount/Espaço Leve.app" || fail 'A assinatura do aplicativo na imagem não foi verificada.'
+[ "$("$executable" --version)" = "$version" ] || fail 'A versão do aplicativo na imagem não corresponde ao pacote.'
+"$executable" --smoke-test >"$work/smoke.log" 2>&1 &
+smoke=$!
+elapsed=0
+while kill -0 "$smoke" 2>/dev/null; do
+  if [ "$elapsed" -ge 60 ]; then kill "$smoke" 2>/dev/null || true; wait "$smoke" 2>/dev/null || true; fail 'A verificação do aplicativo excedeu o tempo disponível.'; fi
+  sleep 1; elapsed=$((elapsed + 1))
+done
+wait "$smoke" || { cat "$work/smoke.log" >&2; fail 'Falha no aplicativo da imagem de disco.'; }
+hdiutil detach "$mount" -quiet || hdiutil detach "$mount" -force -quiet || fail 'Não foi possível desmontar a imagem de disco.'
+mounted=0
+tested=1

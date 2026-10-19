@@ -5,10 +5,8 @@ import path from "node:path";
 export const runtimes = ["win-x64", "osx-x64", "osx-arm64", "linux-x64"];
 export function assetNames(version) {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("Versão inválida: " + version);
-  return [
-    ...runtimes.map(rid => "EspacoLeve-" + version + "-" + rid + (rid === "linux-x64" ? ".tar.gz" : ".zip")),
-    "EspacoLeve-" + version + "-win-x64.exe"
-  ];
+  const extensions = { "win-x64": ".exe", "osx-x64": ".dmg", "osx-arm64": ".dmg", "linux-x64": ".tar.gz" };
+  return runtimes.map(rid => "EspacoLeve-" + version + "-" + rid + extensions[rid]);
 }
 export function prepare(_config, { nextRelease }) {
   if (process.env.EXPECTED_VERSION !== nextRelease.version)
@@ -17,9 +15,9 @@ export function prepare(_config, { nextRelease }) {
 }
 export function createManifest(directory, version) {
   const expected = assetNames(version);
-  const present = readdirSync(directory).filter(name => name.endsWith(".zip") || name.endsWith(".tar.gz") || name.endsWith(".exe"));
+  const present = readdirSync(directory).filter(name => name !== "SHA256SUMS.txt");
   if (expected.some(name => !present.includes(name)) || present.some(name => !expected.includes(name)))
-    throw new Error("Os quatro pacotes e o executável Windows verificados são obrigatórios para publicar.");
+    throw new Error("Os quatro instaladores verificados (executável Windows, duas imagens de disco macOS e pacote Linux) são obrigatórios, sem outros anexos.");
   const sums = expected.map(name => createHash("sha256").update(readFileSync(path.join(directory, name))).digest("hex") + "  " + name);
   writeFileSync(path.join(directory, "SHA256SUMS.txt"), sums.join("\n") + "\n");
 }

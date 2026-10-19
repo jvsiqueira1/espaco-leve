@@ -80,8 +80,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   package:
-    needs: plan
-    if: needs.plan.outputs.version != ''
+    needs: [verify, plan]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && (github.event_name == 'pull_request' || needs.plan.outputs.version != '') }}
     strategy:
       fail-fast: false
       matrix:
@@ -104,7 +104,7 @@ jobs:
       - name: Build versioned package
         shell: pwsh
         env:
-          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.version || '0.0.0' }}
           RELEASE_RUNTIME: ${{ matrix.rid }}
         run: ./scripts/package.ps1 -Version $env:RELEASE_VERSION -Runtime $env:RELEASE_RUNTIME
       - uses: actions/upload-artifact@v7
