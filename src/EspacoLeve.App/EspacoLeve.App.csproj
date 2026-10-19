@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>EspacoLeve</AssemblyName>
+    <RootNamespace>EspacoLeve.App</RootNamespace>
+    <ApplicationIcon>../../assets/app.ico</ApplicationIcon>
+    <Version>1.0.0</Version>
+    <Product>Espaço Leve</Product>
+    <Description>Manutenção de armazenamento com limpeza segura e revisão.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../EspacoLeve.Core/EspacoLeve.Core.csproj" />
+  </ItemGroup>
+</Project>
