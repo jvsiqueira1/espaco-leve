@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Folha leve sobre a base da barra lateral; a faixa inferior é o espaço ocupado e a parte clara, a folga. -->
+  <defs>
+    <path id="base" d="M347 100H677C835.1 100 924 188.9 924 347V677C924 835.1 835.1 924 677 924H347C188.9 924 100 835.1 100 677V347C100 188.9 188.9 100 347 100Z"/>
+    <path id="leaf" d="M0 -320C40 -250 200 -170 196 0C192 140 96 230 0 262C-96 230 -192 140 -196 0C-200 -170 -40 -250 0 -320Z" transform="translate(512 512) rotate(42) scale(1.1)"/>
+    <linearGradient id="surface" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1B5258"/>
+      <stop offset="1" stop-color="#0F3237"/>
+    </linearGradient>
+    <linearGradient id="used-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3BB5A5"/>
+      <stop offset="1" stop-color="#087F75"/>
+    </linearGradient>
+    <clipPath id="free"><rect width="1024" height="630"/></clipPath>
+    <clipPath id="used"><rect y="650" width="1024" height="374"/></clipPath>
+    <filter id="blur" x="-10%" y="-10%" width="120%" height="125%"><feGaussianBlur stdDeviation="14"/></filter>
+  </defs>
+  <use id="shadow" href="#base" transform="translate(0 12)" opacity=".28" filter="url(#blur)"/>
+  <use href="#base" fill="url(#surface)"/>
+  <use id="lift" href="#leaf" fill="#071E22" transform="translate(0 14)" opacity=".35" filter="url(#blur)"/>
+  <use href="#leaf" fill="#F3F7F7" clip-path="url(#free)"/>
+  <use href="#leaf" fill="url(#used-fill)" clip-path="url(#used)"/>
+  <path id="rib" d="M0 262V-220" transform="translate(512 512) rotate(42) scale(1.1)" stroke="#123D42" stroke-width="16" stroke-linecap="round" fill="none"/>
+</svg>
