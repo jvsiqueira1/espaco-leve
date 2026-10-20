@@ -74,11 +74,11 @@ notarize() {
     fail "A Apple não aprovou $2 na notarização."
   fi
 }
-# The ticket can take a while to reach Apple's CDN after notarytool reports Accepted, so stapling is retried.
-staple() {
+# stapler talks to Apple's CloudKit: the ticket can lag behind notarytool's Accepted and hosted runners drop connections, so it is retried.
+stapler() {
   tries=1
-  until xcrun stapler staple "$1" >"$work/staple.log" 2>&1; do
-    [ "$tries" -lt 6 ] || { cat "$work/staple.log" >&2; fail "Falha ao anexar a notarização $2."; }
+  until xcrun stapler "$1" "$2" >"$work/stapler.log" 2>&1; do
+    [ "$tries" -lt 6 ] || { cat "$work/stapler.log" >&2; fail "$3"; }
     tries=$((tries + 1)); sleep 20
   done
 }
@@ -130,7 +130,7 @@ if [ -n "$identity" ]; then
   ditto -c -k --keepParent "$app" "$work/app.zip" || fail 'Falha ao compactar o aplicativo para notarização.'
   notarize "$work/app.zip" 'o aplicativo'
   rm -f "$work/app.zip"
-  staple "$app" 'ao aplicativo'
+  stapler staple "$app" 'Falha ao anexar a notarização ao aplicativo.'
 fi
 ln -s /Applications "$work/image/Applications"
 
@@ -156,8 +156,8 @@ fi
 if [ -n "$identity" ]; then
   sign "$dmg" || fail 'Falha na assinatura Developer ID da imagem de disco.'
   notarize "$dmg" 'a imagem de disco'
-  staple "$dmg" 'à imagem de disco'
-  xcrun stapler validate -v "$dmg" || fail 'A notarização da imagem de disco não foi validada.'
+  stapler staple "$dmg" 'Falha ao anexar a notarização à imagem de disco.'
+  stapler validate "$dmg" 'A notarização da imagem de disco não foi validada.'
   spctl -a -t open --context context:primary-signature -vv "$dmg" || fail 'O Gatekeeper recusou a imagem de disco.'
 fi
 
@@ -174,7 +174,7 @@ fi
 executable="$mount/Espaço Leve.app/Contents/MacOS/EspacoLeve"
 codesign --verify --deep --strict "$mount/Espaço Leve.app" || fail 'A assinatura do aplicativo na imagem não foi verificada.'
 if [ -n "$identity" ]; then
-  xcrun stapler validate -v "$mount/Espaço Leve.app" || fail 'A notarização do aplicativo na imagem não foi validada.'
+  stapler validate "$mount/Espaço Leve.app" 'A notarização do aplicativo na imagem não foi validada.'
   spctl -a -t exec -vv "$mount/Espaço Leve.app" || fail 'O Gatekeeper recusou o aplicativo na imagem.'
 fi
 [ "$("$executable" --version)" = "$version" ] || fail 'A versão do aplicativo na imagem não corresponde ao pacote.'
