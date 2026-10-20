@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Hardened runtime entitlements for the Developer ID build. CoreCLR maps its JIT code with MAP_JIT and fails to start without allow-jit.
+     Every nested library is signed with the same Team ID, so library validation stays enabled; W^X stays on, so unsigned executable memory is not needed. -->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key><true/>
+</dict>
+</plist>
