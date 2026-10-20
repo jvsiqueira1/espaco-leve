@@ -188,7 +188,7 @@ try { _ = Updates.ParseChecksums(new string('a', 64) + "  x.dmg\n" + new string(
 catch (UpdateException) { Assert(true, "reject conflicting checksums"); }
 var hashed = Path.Combine(fixture, "hashed.bin"); File.WriteAllText(hashed, "package");
 Assert(Updates.Matches(hashed, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("package")))) && !Updates.Matches(hashed, new string('0', 64)), "detect checksum mismatch");
-Assert(InstallTarget.Detect("/Applications/Espaço Leve.app/Contents/MacOS/EspacoLeve", DesktopPlatform.MacOS)?.Location == "/Applications/Espaço Leve.app" &&
+Assert(InstallTarget.Detect("/Applications/Espaço Leve.app/Contents/MacOS/EspacoLeve", DesktopPlatform.MacOS)?.Location.Replace('\\', '/') == "/Applications/Espaço Leve.app" &&
     InstallTarget.Detect("/usr/local/share/dotnet/dotnet", DesktopPlatform.MacOS) is null && InstallTarget.Detect("/tmp/EspacoLeve", DesktopPlatform.MacOS) is null, "update only installed app bundles");
 
 // A loopback server stands in for GitHub; it never leaves this computer.
