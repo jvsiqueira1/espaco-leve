@@ -157,7 +157,7 @@ if [ -n "$identity" ]; then
   sign "$dmg" || fail 'Falha na assinatura Developer ID da imagem de disco.'
   notarize "$dmg" 'a imagem de disco'
   staple "$dmg" 'à imagem de disco'
-  xcrun stapler validate -q "$dmg" || fail 'A notarização da imagem de disco não foi validada.'
+  xcrun stapler validate -v "$dmg" || fail 'A notarização da imagem de disco não foi validada.'
   spctl -a -t open --context context:primary-signature -vv "$dmg" || fail 'O Gatekeeper recusou a imagem de disco.'
 fi
 
@@ -174,7 +174,7 @@ fi
 executable="$mount/Espaço Leve.app/Contents/MacOS/EspacoLeve"
 codesign --verify --deep --strict "$mount/Espaço Leve.app" || fail 'A assinatura do aplicativo na imagem não foi verificada.'
 if [ -n "$identity" ]; then
-  xcrun stapler validate -q "$mount/Espaço Leve.app" || fail 'A notarização do aplicativo na imagem não foi validada.'
+  xcrun stapler validate -v "$mount/Espaço Leve.app" || fail 'A notarização do aplicativo na imagem não foi validada.'
   spctl -a -t exec -vv "$mount/Espaço Leve.app" || fail 'O Gatekeeper recusou o aplicativo na imagem.'
 fi
 [ "$("$executable" --version)" = "$version" ] || fail 'A versão do aplicativo na imagem não corresponde ao pacote.'
