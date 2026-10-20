@@ -7,9 +7,11 @@ case "$version" in *[!0-9.]*|.*|*.|*..*) fail 'Versão inválida.' ;; *.*.*.*) f
 case "$runtime" in osx-arm64|osx-x64) ;; *) fail 'Runtime macOS inválido.' ;; esac
 [ -f "$publish/EspacoLeve" ] || fail 'Executável ausente na publicação.'
 # diskutil image replaces the deprecated hdiutil commands; older hosts keep hdiutil.
+# macOS 15 already has diskutil image, but without --volumeName, so probe the options used below.
 if [ -n "${ESPACO_LEVE_DMG_TOOL:-}" ]; then
   tool="$ESPACO_LEVE_DMG_TOOL"
-elif diskutil image info -h >/dev/null 2>&1; then
+elif diskutil image create from --help 2>&1 | grep -q -- --volumeName &&
+  diskutil image attach --help 2>&1 | grep -q -- --nobrowse; then
   tool=diskutil
 else
   tool=hdiutil
