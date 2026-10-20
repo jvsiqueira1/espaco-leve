@@ -21,7 +21,7 @@ Todos os pacotes incluem o runtime .NET. Não é necessário instalar SDK, Node.
 | osx-x64.dmg | macOS 15 ou posterior, Intel |
 | linux-x64.tar.gz | Linux, x64, glibc e ambiente gráfico |
 
-As versões iniciais para Windows não possuem assinatura de editor. No macOS, o pacote é assinado com Developer ID e notarizado pela Apple quando a assinatura está configurada no repositório; até lá recebe assinatura ad hoc e o Gatekeeper exige autorização em Privacidade e Segurança (veja [Assinatura e notarização (macOS)](#assinatura-e-notarização-macos)). A release inclui somas SHA-256 dos pacotes em SHA256SUMS.txt. Os anexos "Source code" são gerados automaticamente pelo GitHub em toda release.
+As versões iniciais para Windows não possuem assinatura de editor. No macOS, o pacote é assinado com Developer ID e notarizado pela Apple, e abre sem aviso do Gatekeeper. Versões até a 1.3.0 tinham assinatura ad hoc e exigem autorização em Privacidade e Segurança (veja [Assinatura e notarização (macOS)](#assinatura-e-notarização-macos)). A release inclui somas SHA-256 dos pacotes em SHA256SUMS.txt. Os anexos "Source code" são gerados automaticamente pelo GitHub em toda release.
 
 No Linux, são necessárias bibliotecas do ambiente gráfico, como libX11, libICE, libSM e fontconfig. A bandeja depende do suporte do ambiente desktop. Para manter o aplicativo acessível mesmo em ambientes sem bandeja, fechar a janela no Linux encerra o programa; minimize a janela para manter a rotina ativa. Windows e macOS mantêm o app na bandeja ao fechar.
 
