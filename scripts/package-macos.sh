@@ -6,15 +6,33 @@ publish="$1"; version="$2"; runtime="$3"; output="$4"
 case "$version" in *[!0-9.]*|.*|*.|*..*) fail 'Versão inválida.' ;; *.*.*.*) fail 'Versão inválida.' ;; *.*.*) ;; *) fail 'Versão inválida.' ;; esac
 case "$runtime" in osx-arm64|osx-x64) ;; *) fail 'Runtime macOS inválido.' ;; esac
 [ -f "$publish/EspacoLeve" ] || fail 'Executável ausente na publicação.'
+# diskutil image replaces the deprecated hdiutil commands; older hosts keep hdiutil.
+if [ -n "${ESPACO_LEVE_DMG_TOOL:-}" ]; then
+  tool="$ESPACO_LEVE_DMG_TOOL"
+elif diskutil image info -h >/dev/null 2>&1; then
+  tool=diskutil
+else
+  tool=hdiutil
+fi
+case "$tool" in diskutil|hdiutil) ;; *) fail 'Ferramenta de imagem de disco inválida.' ;; esac
 base="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 work="$base/work/package-macos/$runtime-$$"
 mount="$work/mount"
+device=
 mounted=0
 tested=0
 dmg="$output/EspacoLeve-$version-$runtime.dmg"
+detach() {
+  if [ "$tool" = diskutil ]; then
+    target="${device:-$mount}"
+    diskutil eject "$target" >/dev/null || { diskutil unmountDisk force "$target" >/dev/null && diskutil eject "$target" >/dev/null; }
+  else
+    hdiutil detach "$mount" -quiet || hdiutil detach "$mount" -force -quiet
+  fi
+}
 cleanup() {
   if [ "$mounted" -eq 1 ]; then
-    hdiutil detach "$mount" -quiet || hdiutil detach "$mount" -force -quiet || { echo "Imagem de disco ainda montada em $mount" >&2; return; }
+    detach || { echo "Imagem de disco ainda montada em $mount" >&2; return; }
   fi
   [ "$tested" -eq 1 ] || rm -f "$dmg"
   rm -rf "$work"
@@ -57,18 +75,35 @@ codesign --force --deep --sign - "$app" || fail 'Falha na assinatura ad hoc do a
 codesign --verify --deep --strict "$app" || fail 'A assinatura do aplicativo não foi verificada.'
 ln -s /Applications "$work/image/Applications"
 
+echo "Criando a imagem de disco com $tool."
 rm -f "$dmg"
 # hdiutil occasionally reports a busy device on hosted runners.
 attempt=1
-until hdiutil create -volname 'Espaço Leve' -srcfolder "$work/image" -fs HFS+ -format UDZO -ov "$dmg" >/dev/null; do
-  [ "$attempt" -lt 3 ] || fail 'Falha ao criar a imagem de disco macOS.'
-  attempt=$((attempt + 1)); sleep 5
-done
-hdiutil verify -quiet "$dmg" || fail 'A imagem de disco macOS está corrompida.'
+if [ "$tool" = diskutil ]; then
+  # UDZO keeps the same zlib format as the hdiutil path; the folder source yields an APFS volume.
+  until diskutil image create from --format UDZO --volumeName 'Espaço Leve' "$work/image" "$dmg" >/dev/null 2>"$work/create.log"; do
+    [ "$attempt" -lt 3 ] || { cat "$work/create.log" >&2; fail 'Falha ao criar a imagem de disco macOS.'; }
+    attempt=$((attempt + 1)); rm -f "$dmg"; sleep 5
+  done
+  # There is no diskutil verify: info only reads the image structure; codesign and the smoke test below read the app contents.
+  [ "$(diskutil image info --plist "$dmg" | plutil -extract 'Image Format' raw -o - -)" = UDZO ] || fail 'A imagem de disco macOS está corrompida.'
+else
+  until hdiutil create -volname 'Espaço Leve' -srcfolder "$work/image" -fs HFS+ -format UDZO -ov "$dmg" >/dev/null; do
+    [ "$attempt" -lt 3 ] || fail 'Falha ao criar a imagem de disco macOS.'
+    attempt=$((attempt + 1)); sleep 5
+  done
+  hdiutil verify -quiet "$dmg" || fail 'A imagem de disco macOS está corrompida.'
+fi
 
 mkdir -p "$mount"
-hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$mount" "$dmg" >/dev/null || fail 'Não foi possível montar a imagem de disco.'
-mounted=1
+if [ "$tool" = diskutil ]; then
+  diskutil image attach --plist --readOnly --nobrowse --mountPoint "$mount" "$dmg" >"$work/attach.plist" || fail 'Não foi possível montar a imagem de disco.'
+  mounted=1
+  device="$(plutil -extract system-entities.0.dev-entry raw -o - "$work/attach.plist")" || fail 'Dispositivo da imagem de disco não identificado.'
+else
+  hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$mount" "$dmg" >/dev/null || fail 'Não foi possível montar a imagem de disco.'
+  mounted=1
+fi
 [ -L "$mount/Applications" ] || fail 'Atalho para Aplicativos ausente na imagem de disco.'
 executable="$mount/Espaço Leve.app/Contents/MacOS/EspacoLeve"
 codesign --verify --deep --strict "$mount/Espaço Leve.app" || fail 'A assinatura do aplicativo na imagem não foi verificada.'
@@ -81,6 +116,6 @@ while kill -0 "$smoke" 2>/dev/null; do
   sleep 1; elapsed=$((elapsed + 1))
 done
 wait "$smoke" || { cat "$work/smoke.log" >&2; fail 'Falha no aplicativo da imagem de disco.'; }
-hdiutil detach "$mount" -quiet || hdiutil detach "$mount" -force -quiet || fail 'Não foi possível desmontar a imagem de disco.'
+detach || fail 'Não foi possível desmontar a imagem de disco.'
 mounted=0
 tested=1
