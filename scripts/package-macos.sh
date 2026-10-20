@@ -6,6 +6,16 @@ publish="$1"; version="$2"; runtime="$3"; output="$4"
 case "$version" in *[!0-9.]*|.*|*.|*..*) fail 'Versão inválida.' ;; *.*.*.*) fail 'Versão inválida.' ;; *.*.*) ;; *) fail 'Versão inválida.' ;; esac
 case "$runtime" in osx-arm64|osx-x64) ;; *) fail 'Runtime macOS inválido.' ;; esac
 [ -f "$publish/EspacoLeve" ] || fail 'Executável ausente na publicação.'
+# A Developer ID identity turns on hardened runtime signing and notarization; without one the package stays ad hoc.
+identity="${MACOS_SIGN_IDENTITY:-}"
+if [ -z "$identity" ]; then
+  [ "${MACOS_REQUIRE_NOTARIZATION:-}" != 1 ] || fail 'Notarização exigida, mas MACOS_SIGN_IDENTITY não foi definido.'
+elif [ -n "${APPLE_API_KEY_PATH:-}${APPLE_API_KEY_ID:-}${APPLE_API_ISSUER_ID:-}" ]; then
+  [ -f "${APPLE_API_KEY_PATH:-}" ] && [ -n "${APPLE_API_KEY_ID:-}" ] && [ -n "${APPLE_API_ISSUER_ID:-}" ] ||
+    fail 'Credenciais da App Store Connect incompletas: defina APPLE_API_KEY_PATH, APPLE_API_KEY_ID e APPLE_API_ISSUER_ID.'
+elif [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ] || [ -z "${APPLE_APP_PASSWORD:-}" ]; then
+  fail 'Assinatura sem credenciais de notarização: defina APPLE_API_KEY_PATH, APPLE_API_KEY_ID e APPLE_API_ISSUER_ID, ou APPLE_ID, APPLE_TEAM_ID e APPLE_APP_PASSWORD.'
+fi
 # diskutil image replaces the deprecated hdiutil commands; older hosts keep hdiutil.
 # macOS 15 already has diskutil image, but without --volumeName, so probe the options used below.
 if [ -n "${ESPACO_LEVE_DMG_TOOL:-}" ]; then
@@ -41,6 +51,29 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
+sign() {
+  if [ -n "${MACOS_SIGN_KEYCHAIN:-}" ]; then
+    codesign --force --timestamp --keychain "$MACOS_SIGN_KEYCHAIN" --sign "$identity" "$@"
+  else
+    codesign --force --timestamp --sign "$identity" "$@"
+  fi
+}
+notary() {
+  if [ -n "${APPLE_API_KEY_PATH:-}" ]; then
+    xcrun notarytool "$@" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID"
+  else
+    xcrun notarytool "$@" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+  fi
+}
+notarize() {
+  echo "Enviando $2 para notarização da Apple."
+  notary submit "$1" --wait --timeout 30m --output-format json >"$work/notary.json" 2>"$work/notary.log" || true
+  if [ "$(plutil -extract status raw -o - "$work/notary.json" 2>/dev/null)" != Accepted ]; then
+    cat "$work/notary.json" "$work/notary.log" >&2
+    submission="$(plutil -extract id raw -o - "$work/notary.json" 2>/dev/null)" && notary log "$submission" >&2
+    fail "A Apple não aprovou $2 na notarização."
+  fi
+}
 rm -rf "$work"
 mkdir -p "$work/iconset.iconset" "$work/image" "$output"
 
@@ -73,8 +106,24 @@ cat > "$app/Contents/Info.plist" <<EOF
 </plist>
 EOF
 plutil -lint -s "$app/Contents/Info.plist" || fail 'Info.plist inválido.'
-codesign --force --deep --sign - "$app" || fail 'Falha na assinatura ad hoc do aplicativo.'
+if [ -z "$identity" ]; then
+  codesign --force --deep --sign - "$app" || fail 'Falha na assinatura ad hoc do aplicativo.'
+else
+  # Sign inside out: .NET keeps managed assemblies beside the executable, so each nested file needs its own signature before the bundle seal.
+  find "$app/Contents/MacOS" -type f ! -path "$app/Contents/MacOS/EspacoLeve" >"$work/nested.txt"
+  while IFS= read -r file; do
+    sign --options runtime "$file" || fail 'Falha na assinatura Developer ID de um componente do aplicativo.'
+  done <"$work/nested.txt"
+  sign --options runtime --entitlements "$base/scripts/macos-entitlements.plist" "$app" || fail 'Falha na assinatura Developer ID do aplicativo.'
+fi
 codesign --verify --deep --strict "$app" || fail 'A assinatura do aplicativo não foi verificada.'
+if [ -n "$identity" ]; then
+  # Stapling the app too lets it pass Gatekeeper offline after being copied out of the disk image.
+  ditto -c -k --keepParent "$app" "$work/app.zip" || fail 'Falha ao compactar o aplicativo para notarização.'
+  notarize "$work/app.zip" 'o aplicativo'
+  rm -f "$work/app.zip"
+  xcrun stapler staple -q "$app" || fail 'Falha ao anexar a notarização ao aplicativo.'
+fi
 ln -s /Applications "$work/image/Applications"
 
 echo "Criando a imagem de disco com $tool."
@@ -96,6 +145,13 @@ else
   done
   hdiutil verify -quiet "$dmg" || fail 'A imagem de disco macOS está corrompida.'
 fi
+if [ -n "$identity" ]; then
+  sign "$dmg" || fail 'Falha na assinatura Developer ID da imagem de disco.'
+  notarize "$dmg" 'a imagem de disco'
+  xcrun stapler staple -q "$dmg" || fail 'Falha ao anexar a notarização à imagem de disco.'
+  xcrun stapler validate -q "$dmg" || fail 'A notarização da imagem de disco não foi validada.'
+  spctl -a -t open --context context:primary-signature -vv "$dmg" || fail 'O Gatekeeper recusou a imagem de disco.'
+fi
 
 mkdir -p "$mount"
 if [ "$tool" = diskutil ]; then
@@ -109,6 +165,10 @@ fi
 [ -L "$mount/Applications" ] || fail 'Atalho para Aplicativos ausente na imagem de disco.'
 executable="$mount/Espaço Leve.app/Contents/MacOS/EspacoLeve"
 codesign --verify --deep --strict "$mount/Espaço Leve.app" || fail 'A assinatura do aplicativo na imagem não foi verificada.'
+if [ -n "$identity" ]; then
+  xcrun stapler validate -q "$mount/Espaço Leve.app" || fail 'A notarização do aplicativo na imagem não foi validada.'
+  spctl -a -t exec -vv "$mount/Espaço Leve.app" || fail 'O Gatekeeper recusou o aplicativo na imagem.'
+fi
 [ "$("$executable" --version)" = "$version" ] || fail 'A versão do aplicativo na imagem não corresponde ao pacote.'
 "$executable" --smoke-test >"$work/smoke.log" 2>&1 &
 smoke=$!
@@ -121,3 +181,8 @@ wait "$smoke" || { cat "$work/smoke.log" >&2; fail 'Falha no aplicativo da image
 detach || fail 'Não foi possível desmontar a imagem de disco.'
 mounted=0
 tested=1
+if [ -n "$identity" ]; then
+  echo 'Pacote macOS assinado com Developer ID e notarizado pela Apple.'
+else
+  echo 'Pacote macOS com assinatura ad hoc: não notarizado pela Apple.'
+fi

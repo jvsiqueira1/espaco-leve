@@ -21,7 +21,7 @@ Todos os pacotes incluem o runtime .NET. Não é necessário instalar SDK, Node.
 | osx-x64.dmg | macOS 15 ou posterior, Intel |
 | linux-x64.tar.gz | Linux, x64, glibc e ambiente gráfico |
 
-As versões iniciais para Windows não possuem assinatura de editor. No macOS, o aplicativo recebe assinatura ad hoc para execução, mas ainda não possui assinatura Developer ID ou notarização Apple; o Gatekeeper pode exigir autorização em Privacidade e Segurança. A release inclui somas SHA-256 dos pacotes em SHA256SUMS.txt. Os anexos "Source code" são gerados automaticamente pelo GitHub em toda release.
+As versões iniciais para Windows não possuem assinatura de editor. No macOS, o pacote é assinado com Developer ID e notarizado pela Apple quando a assinatura está configurada no repositório; até lá recebe assinatura ad hoc e o Gatekeeper exige autorização em Privacidade e Segurança (veja [Assinatura e notarização (macOS)](#assinatura-e-notarização-macos)). A release inclui somas SHA-256 dos pacotes em SHA256SUMS.txt. Os anexos "Source code" são gerados automaticamente pelo GitHub em toda release.
 
 No Linux, são necessárias bibliotecas do ambiente gráfico, como libX11, libICE, libSM e fontconfig. A bandeja depende do suporte do ambiente desktop. Para manter o aplicativo acessível mesmo em ambientes sem bandeja, fechar a janela no Linux encerra o programa; minimize a janela para manter a rotina ativa. Windows e macOS mantêm o app na bandeja ao fechar.
 
@@ -89,7 +89,7 @@ Para produzir um pacote na própria plataforma:
     pwsh scripts/package.ps1 -Version 1.0.0 -Runtime win-x64
     pwsh scripts/package.ps1 -Version 1.0.0 -Runtime osx-arm64
 
-O resultado fica em artifacts/release. No macOS é gerada a imagem de disco (.dmg), montada e testada antes de concluir; no Linux, o .tar.gz. A imagem é criada com diskutil image quando o sistema oferece esse comando e com hdiutil nos demais; ESPACO_LEVE_DMG_TOOL=hdiutil força a alternativa. Use osx-x64 ou linux-x64 no host correspondente. Não publique auxiliares nativos de uma plataforma dentro de pacotes de outra.
+O resultado fica em artifacts/release. No macOS é gerada a imagem de disco (.dmg), montada e testada antes de concluir; no Linux, o .tar.gz. A imagem é criada com diskutil image quando o sistema oferece esse comando e com hdiutil nos demais; ESPACO_LEVE_DMG_TOOL=hdiutil força a alternativa. Sem MACOS_SIGN_IDENTITY, o .app recebe assinatura ad hoc e o pacote não é notarizado. Use osx-x64 ou linux-x64 no host correspondente. Não publique auxiliares nativos de uma plataforma dentro de pacotes de outra.
 
 Opções de diagnóstico:
 
@@ -121,6 +121,27 @@ Não publica no npm, não cria commits automáticos e não acrescenta Co-authore
     npm test
 
 O workflow usa o GITHUB_TOKEN temporário fornecido pelo GitHub com permissão de escrita em conteúdo somente nos passos de planejamento/publicação. Não precisa cadastrar token npm ou PAT. Execuções de pull requests verificam o código e geram os pacotes com a versão 0.0.0, sem publicar; eles ficam disponíveis como artefatos do workflow.
+
+## Assinatura e notarização (macOS)
+
+Enquanto o pacote não for notarizado, o macOS informa que não pôde verificar se o Espaço Leve está livre de malware. Para liberar: tente abrir o app, feche o aviso, vá a **Ajustes do Sistema > Privacidade e Segurança**, clique em **Abrir Mesmo Assim** ao lado da mensagem do Espaço Leve e confirme. No macOS 15 ou posterior, clicar com o botão direito e escolher **Abrir** não basta.
+
+Com os cinco secrets abaixo cadastrados, o job de pacote macOS importa o certificado num keychain temporário, removido ao fim do job, assina cada componente do app com Developer ID e hardened runtime (único entitlement: com.apple.security.cs.allow-jit, exigido pelo JIT do .NET, em scripts/macos-entitlements.plist), notariza e grampeia o ticket no .app e no .dmg, e confere tudo com stapler e spctl. Se algum secret estiver presente, todos são obrigatórios e a notarização também: uma falha impede a release, que nunca publica um pacote meio assinado. Sem nenhum secret, inclusive em pull requests de forks, o pacote continua ad hoc.
+
+Passos para o mantenedor, com a conta do Apple Developer Program:
+
+1. Crie o certificado **Developer ID Application** (Xcode > Ajustes > Contas > Gerenciar Certificados > + ou developer.apple.com > Certificates; exige o papel Account Holder).
+2. No Acesso às Chaves, exporte o certificado com sua chave privada como .p12, protegido por senha.
+3. Em App Store Connect > Usuários e Acesso > Integrações > App Store Connect API, gere uma chave de equipe com o papel **Developer**. Baixe o AuthKey_ID.p8 (só pode ser baixado uma vez) e anote o Key ID e o Issuer ID.
+4. Cadastre os secrets:
+
+       base64 -i DeveloperID.p12 | gh secret set MACOS_CERTIFICATE_P12_BASE64
+       gh secret set MACOS_CERTIFICATE_PASSWORD
+       gh secret set APPLE_API_KEY_ID --body "KEY_ID"
+       gh secret set APPLE_API_ISSUER_ID --body "ISSUER_ID"
+       base64 -i AuthKey_KEY_ID.p8 | gh secret set APPLE_API_KEY_P8_BASE64
+
+A identidade de assinatura é lida do próprio certificado. Para assinar localmente, defina MACOS_SIGN_IDENTITY (nome ou SHA-1 da identidade no keychain) e, para a notarização, APPLE_API_KEY_PATH, APPLE_API_KEY_ID e APPLE_API_ISSUER_ID, ou APPLE_ID, APPLE_TEAM_ID e APPLE_APP_PASSWORD (senha de app); MACOS_SIGN_KEYCHAIN limita a busca a um keychain.
 
 ## Organização
 
