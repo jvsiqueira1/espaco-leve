@@ -24,10 +24,23 @@ internal static class Program
             }
             catch (Exception ex) { Console.Error.WriteLine(ex.Message); return 1; }
         }
+        if (args.Contains("--check-update"))
+        {
+            try
+            {
+                var check = Updater.ForCurrentProcess(Version).CheckAsync().GetAwaiter().GetResult();
+                Console.WriteLine(JsonSerializer.Serialize(check, new JsonSerializerOptions { WriteIndented = true }));
+                return 0;
+            }
+            catch (Exception ex) { Console.Error.WriteLine(ex.Message); return 1; }
+        }
         try
         {
-            using var instance = args.Contains("--render-preview") || args.Contains("--smoke-test") ? null : new SingleInstance();
+            var preview = args.Contains("--render-preview") || args.Contains("--smoke-test");
+            if (!preview) UpdateInstaller.WaitForPrevious(args);
+            using var instance = preview ? null : new SingleInstance();
             if (instance is not null && !instance.IsOwner) { instance.Notify(); return 0; }
+            if (instance is not null) UpdateInstaller.CleanupLeftovers(InstallTarget.Detect(Environment.ProcessPath, PlatformContext.Current.Platform));
             return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
         }
         catch (Exception ex)

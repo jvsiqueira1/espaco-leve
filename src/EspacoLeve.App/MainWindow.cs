@@ -16,6 +16,12 @@ public sealed class MainWindow : Window
     readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = Muted };
     readonly ProgressBar progress = new() { IsIndeterminate = true, Height = 3, IsVisible = false };
     readonly Button cancelScan = new() { Content = "Cancelar análise", IsVisible = false };
+    readonly Border updateBanner = new() { IsVisible = false, Background = Brush.Parse("#E5F2F0"), BorderBrush = Brush.Parse("#BFDCD8"), BorderThickness = new(1), CornerRadius = new(10), Padding = new(18, 14), Margin = new(0, 0, 0, 20) };
+    readonly TextBlock updateTitle = Text("", 15, bold: true), updateDetail = Text("", 12, Brush.Parse("#4D6468"));
+    readonly ProgressBar updateProgress = new() { Minimum = 0, Maximum = 1, Height = 3, IsVisible = false, Foreground = Teal };
+    readonly Button installUpdate = new() { Content = "Atualizar e reiniciar", Padding = new(16, 10), Background = Teal, Foreground = Brushes.White, CornerRadius = new(6) };
+    readonly Button skipUpdate = new() { Content = "Dispensar esta versão", Padding = new(14, 10), Background = Brushes.Transparent, Foreground = Ink, CornerRadius = new(6) };
+    readonly Button cancelUpdate = new() { Content = "Cancelar", Padding = new(14, 10), Background = Brushes.White, Foreground = Ink, CornerRadius = new(6), IsVisible = false };
     readonly List<Button> actions = [];
     readonly List<Button> nav = [];
     string selected = "overview";
@@ -50,6 +56,18 @@ public sealed class MainWindow : Window
         cancelScan.Click += (_, _) => app.CancelScan();
         footer.Children.Add(progress); footer.Children.Add(cancelScan); footer.Children.Add(status);
         DockPanel.SetDock(footer, Dock.Bottom); main.Children.Add(footer);
+        var notice = new Grid { ColumnDefinitions = new("*,Auto"), ColumnSpacing = 16 };
+        var copy = Stack(4); copy.VerticalAlignment = VerticalAlignment.Center;
+        copy.Children.Add(updateTitle); copy.Children.Add(updateDetail); copy.Children.Add(updateProgress);
+        notice.Children.Add(copy);
+        var choices = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        choices.Children.Add(skipUpdate); choices.Children.Add(cancelUpdate); choices.Children.Add(installUpdate);
+        Grid.SetColumn(choices, 1); notice.Children.Add(choices);
+        updateBanner.Child = notice;
+        installUpdate.Click += async (_, _) => await app.InstallUpdate();
+        skipUpdate.Click += (_, _) => app.SkipUpdate();
+        cancelUpdate.Click += (_, _) => app.CancelUpdate();
+        DockPanel.SetDock(updateBanner, Dock.Top); main.Children.Add(updateBanner);
         main.Children.Add(new ScrollViewer { Content = page, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled });
         Content = layout;
         app.Changed += Refresh;
@@ -61,7 +79,7 @@ public sealed class MainWindow : Window
     static Border Card(Control child) => new() { Background = Brushes.White, Padding = new(20), CornerRadius = new(10), BorderBrush = Brush.Parse("#E1EAEA"), BorderThickness = new(1), Child = child };
     Button Action(string title, Func<Task> click, bool primary = false)
     {
-        var button = new Button { Content = title, Padding = new(16, 11), Background = primary ? Teal : Brushes.White, Foreground = primary ? Brushes.White : Ink, CornerRadius = new(6), IsEnabled = !app.Busy };
+        var button = new Button { Content = title, Padding = new(16, 11), Background = primary ? Teal : Brushes.White, Foreground = primary ? Brushes.White : Ink, CornerRadius = new(6), IsEnabled = !app.Busy && !app.PendingRestart };
         button.Click += async (_, _) => await click();
         actions.Add(button);
         return button;
@@ -77,9 +95,26 @@ public sealed class MainWindow : Window
     int Signature() => HashCode.Combine(app.Rows, app.Store.LoadHistory().FirstOrDefault()?.Time, app.Settings.NextRunUtc, app.Settings.AutomaticEnabled);
     void Refresh()
     {
-        status.Text = app.Status; progress.IsVisible = app.Busy;
+        // The update notice has its own determinate bar, so the footer one stays hidden meanwhile.
+        status.Text = app.Status; progress.IsVisible = app.Busy && app.UpdateProgress is null;
         cancelScan.IsVisible = app.Busy && app.CanCancel;
-        foreach (var action in actions) action.IsEnabled = !app.Busy;
+        foreach (var action in actions) action.IsEnabled = !app.Busy && !app.PendingRestart;
+        updateBanner.IsVisible = app.Update is not null;
+        if (app.Update is { } update)
+        {
+            var installing = app.UpdateProgress is not null;
+            updateTitle.Text = app.PendingRestart ? $"Versão {update.Version} instalada" :
+                installing ? $"Atualizando para a versão {update.Version}" : $"Versão {update.Version} disponível";
+            updateDetail.Text = app.PendingRestart ? "Feche e abra o Espaço Leve para usar a nova versão. Até lá, análises e limpezas ficam bloqueadas." :
+                installing ? "O app reinicia sozinho ao terminar. Se algo falhar ou você cancelar, a versão atual continua instalada." :
+                app.UpdateNote ?? $"Você usa a versão {Program.Version}. O download é conferido antes de instalar e o app reinicia sozinho.";
+            installUpdate.Content = app.PendingRestart ? "Fechar o Espaço Leve" : app.UpdateNote is null ? "Atualizar e reiniciar" : "Tentar novamente";
+            updateProgress.IsVisible = installing; updateProgress.Value = app.UpdateProgress ?? 0;
+            installUpdate.IsVisible = !installing;
+            installUpdate.IsEnabled = app.PendingRestart || !app.Busy || app.CanCancel;
+            skipUpdate.IsVisible = !installing && !app.PendingRestart;
+            cancelUpdate.IsVisible = installing && app.CanCancelUpdate;
+        }
         if (!app.Busy && selected != "settings" && Signature() != renderSignature) Navigate(selected);
     }
     StackPanel Heading(string title, string subtitle)
@@ -184,6 +219,13 @@ public sealed class MainWindow : Window
             form.Children.Add(check); checks.Add((row.Rule, check));
         }
         form.Children.Add(Text("Caches de pacotes, navegadores, Downloads e lixeira ficam fora da rotina. A rotina pendente é executada ao abrir o app após o horário agendado.", 12, Muted));
+        form.Children.Add(Text("Atualizações", 15, bold: true));
+        var updates = new CheckBox { Content = "Procurar novas versões automaticamente", IsChecked = app.Settings.UpdateCheckEnabled };
+        form.Children.Add(updates);
+        var versionRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        versionRow.Children.Add(Action("Verificar atualizações", () => app.CheckUpdates(true)));
+        var installed = Text("Versão instalada: " + Program.Version, 12, Muted); installed.VerticalAlignment = VerticalAlignment.Center;
+        versionRow.Children.Add(installed); form.Children.Add(versionRow);
         form.Children.Add(Action("Salvar preferências", () =>
         {
             try
@@ -197,6 +239,7 @@ public sealed class MainWindow : Window
                 app.Settings.ScheduleHour = (int)hour.Value!; app.Settings.ScheduleMinute = (int)minute.Value!;
                 app.Settings.TimeZoneId = TimeZoneInfo.Local.Id;
                 app.Settings.TempRetentionDays = (int)tempDays.Value!; app.Settings.LogRetentionDays = (int)logDays.Value!;
+                app.Settings.UpdateCheckEnabled = updates.IsChecked == true;
                 foreach (var (rule, check) in checks)
                 {
                     app.Settings.DisabledRules.RemoveAll(x => x == rule.Id);

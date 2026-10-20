@@ -36,6 +36,14 @@ public sealed class App : Application
             if (!preview)
             {
                 var menu = new NativeMenu();
+                var update = new NativeMenuItem("Atualização disponível") { IsVisible = false };
+                update.Click += (_, _) => Open();
+                menu.Add(update);
+                controller.Changed += () =>
+                {
+                    update.IsVisible = controller.Update is not null && !controller.PendingRestart;
+                    if (controller.Update is { } release) update.Header = $"Atualizar para a versão {release.Version}…";
+                };
                 var open = new NativeMenuItem("Abrir Espaço Leve");
                 open.Click += (_, _) => Open();
                 menu.Add(open);
@@ -79,7 +87,9 @@ public sealed class App : Application
                 {
                     try { await controller.Tick(); }
                     catch (Exception ex) { controller.Announce("A rotina não pôde iniciar: " + ex.Message); }
+                    await controller.CheckUpdates();
                 };
+                controller.ExitRequested += () => { exiting = true; tray?.Dispose(); desktop.Shutdown(); };
                 timer.Start();
             }
             window.Opened += async (_, _) =>
@@ -106,6 +116,7 @@ public sealed class App : Application
                 else
                 {
                     if (Program.Arguments.Contains("--background") && CanHide) window.Hide();
+                    _ = controller.CheckUpdates();
                     await controller.Scan();
                 }
             };
