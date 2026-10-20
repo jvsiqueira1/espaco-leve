@@ -50,9 +50,12 @@ public sealed class AppSettings
     public int LogRetentionDays { get; set; } = 30;
     public DateTimeOffset? LastLowSpaceAlertUtc { get; set; }
     public DateTimeOffset? LastDockerAlertUtc { get; set; }
+    public bool UpdateCheckEnabled { get; set; } = true;
+    public string? SkippedUpdateVersion { get; set; }
 
     public void Validate()
     {
+        if (Updates.Parse(SkippedUpdateVersion) is null) SkippedUpdateVersion = null;
         if (!Enum.IsDefined(ScheduleDay)) ScheduleDay = DayOfWeek.Friday;
         ScheduleHour = Math.Clamp(ScheduleHour, 0, 23);
         ScheduleMinute = Math.Clamp(ScheduleMinute, 0, 59);
