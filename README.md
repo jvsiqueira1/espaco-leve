@@ -89,7 +89,7 @@ Para produzir um pacote na própria plataforma:
     pwsh scripts/package.ps1 -Version 1.0.0 -Runtime win-x64
     pwsh scripts/package.ps1 -Version 1.0.0 -Runtime osx-arm64
 
-O resultado fica em artifacts/release. No macOS é gerada a imagem de disco (.dmg), montada e testada antes de concluir; no Linux, o .tar.gz. Use osx-x64 ou linux-x64 no host correspondente. Não publique auxiliares nativos de uma plataforma dentro de pacotes de outra.
+O resultado fica em artifacts/release. No macOS é gerada a imagem de disco (.dmg), montada e testada antes de concluir; no Linux, o .tar.gz. A imagem é criada com diskutil image quando o sistema oferece esse comando e com hdiutil nos demais; ESPACO_LEVE_DMG_TOOL=hdiutil força a alternativa. Use osx-x64 ou linux-x64 no host correspondente. Não publique auxiliares nativos de uma plataforma dentro de pacotes de outra.
 
 Opções de diagnóstico:
 
