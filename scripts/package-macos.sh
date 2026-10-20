@@ -74,6 +74,14 @@ notarize() {
     fail "A Apple não aprovou $2 na notarização."
   fi
 }
+# The ticket can take a while to reach Apple's CDN after notarytool reports Accepted, so stapling is retried.
+staple() {
+  tries=1
+  until xcrun stapler staple "$1" >"$work/staple.log" 2>&1; do
+    [ "$tries" -lt 6 ] || { cat "$work/staple.log" >&2; fail "Falha ao anexar a notarização $2."; }
+    tries=$((tries + 1)); sleep 20
+  done
+}
 rm -rf "$work"
 mkdir -p "$work/iconset.iconset" "$work/image" "$output"
 
@@ -122,7 +130,7 @@ if [ -n "$identity" ]; then
   ditto -c -k --keepParent "$app" "$work/app.zip" || fail 'Falha ao compactar o aplicativo para notarização.'
   notarize "$work/app.zip" 'o aplicativo'
   rm -f "$work/app.zip"
-  xcrun stapler staple -q "$app" || fail 'Falha ao anexar a notarização ao aplicativo.'
+  staple "$app" 'ao aplicativo'
 fi
 ln -s /Applications "$work/image/Applications"
 
@@ -148,7 +156,7 @@ fi
 if [ -n "$identity" ]; then
   sign "$dmg" || fail 'Falha na assinatura Developer ID da imagem de disco.'
   notarize "$dmg" 'a imagem de disco'
-  xcrun stapler staple -q "$dmg" || fail 'Falha ao anexar a notarização à imagem de disco.'
+  staple "$dmg" 'à imagem de disco'
   xcrun stapler validate -q "$dmg" || fail 'A notarização da imagem de disco não foi validada.'
   spctl -a -t open --context context:primary-signature -vv "$dmg" || fail 'O Gatekeeper recusou a imagem de disco.'
 fi
