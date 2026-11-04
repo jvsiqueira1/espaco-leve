@@ -101,6 +101,21 @@ Assert(DockerService.IsLocalEndpoint("unix:///var/run/docker.sock") &&
     DockerService.IsLocalEndpoint("npipe:////./pipe/docker_engine"), "accept local Docker endpoints");
 Assert(!DockerService.IsLocalEndpoint("ssh://server") && !DockerService.IsLocalEndpoint("tcp://server:2375"), "reject remote Docker endpoints");
 Assert(DockerService.ParseBytes("21.76GB") == 21760000000, "interpret Docker decimal size correctly");
+// Real processes, but only harmless shell builtins: stdout and stderr stay apart, cancellation is not a timeout.
+var split = OperatingSystem.IsWindows()
+    ? await CommandRunner.Run("cmd.exe", ["/d", "/c", "echo saida& echo aviso>&2"], 20)
+    : await CommandRunner.Run("/bin/sh", ["-c", "echo saida; echo aviso >&2"], 20);
+Assert(split.Success && split.Stdout.Trim() == "saida" && split.Stderr.Trim() == "aviso" && split.Output.Contains("aviso"), "keep stdout and stderr separate");
+string[] pause = OperatingSystem.IsWindows() ? ["/d", "/c", "ping -n 30 127.0.0.1 >nul"] : ["-c", "sleep 30"];
+var shell = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh";
+var timedOut = await CommandRunner.Run(shell, pause, 1, killTree: true);
+Assert(timedOut.TimedOut && !timedOut.Canceled && !timedOut.Success, "report a timeout as a timeout");
+using (var stop = new CancellationTokenSource(TimeSpan.FromMilliseconds(300)))
+{
+    var stopped = await CommandRunner.Run(shell, pause, 30, stop.Token, killTree: true);
+    Assert(stopped.Canceled && !stopped.TimedOut && !stopped.Success, "report a user cancellation as cancellation, not timeout");
+}
+await DockerTests.Run(Assert);
 Assert(DockerService.ParseBytes("5GiB") == 5368709120, "interpret binary sizes correctly");
 var platform = PlatformContext.Current;
 Assert(!Discovery.AcceptCacheRoot(platform.Home, platform), "reject home as a cache root");

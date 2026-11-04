@@ -24,6 +24,22 @@ internal static class Program
             }
             catch (Exception ex) { Console.Error.WriteLine(ex.Message); return 1; }
         }
+        if (args.Contains("--docker-diagnostic"))
+        {
+            // Read-only: the same analysis as the window, printed for comparison between Terminal and Finder.
+            try
+            {
+                var scan = new DockerService(new DataStore().LoadSettings()).Analyze().GetAwaiter().GetResult();
+                Console.WriteLine(scan.Diagnostic.ToText());
+                Console.WriteLine("Estado: " + DockerText.Label(scan.State) + (scan.Problem.Length > 0 ? " — " + scan.Problem : ""));
+                foreach (var category in scan.Categories) Console.WriteLine(category.Title + ": " + Format.Size(category.SizeBytes) + " (recuperável " + Format.Size(category.ReclaimableBytes) + ")");
+                foreach (var builder in scan.Builders) Console.WriteLine("Builder " + builder.Builder.Name + ": total " + Format.Size(builder.TotalBytes) + ", elegível " + Format.Size(builder.EligibleBytes) + " — " + builder.Note);
+                foreach (var disk in scan.Disks) Console.WriteLine("Disco " + disk.Path + ": lógico " + Format.Size(disk.LogicalBytes) + ", alocado " + Format.Size(disk.AllocatedBytes) + ", uso interno " + Format.Size(disk.InternalBytes));
+                Console.WriteLine("Cache elegível: " + Format.Size(scan.EligibleBytes) + " · uso total: " + Format.Size(scan.TotalBytes));
+                return 0;
+            }
+            catch (Exception ex) { Console.Error.WriteLine(ex.Message); return 1; }
+        }
         if (args.Contains("--check-update"))
         {
             try

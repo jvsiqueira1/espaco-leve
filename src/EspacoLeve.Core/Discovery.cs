@@ -59,7 +59,7 @@ public sealed class Discovery(PlatformContext platform, AppSettings settings)
             var tool = ToolCommand.Find(executable);
             if (tool is null) continue;
             var output = await tool.Run(query, 10, token);
-            var path = output.Output.Trim();
+            var path = output.Stdout.Trim();
             if (!output.Success || !AcceptCacheRoot(path, platform) || !Directory.Exists(path)) continue;
             if (id == "npm-cache")
             {
@@ -72,13 +72,15 @@ public sealed class Discovery(PlatformContext platform, AppSettings settings)
             rules.Add(new(id, title, "Usa o comando oficial da ferramenta. Os dados podem precisar ser baixados ou compilados novamente. Não remove projetos ou pacotes instalados.",
                 kind, path, false));
         }
-        if (new DockerService().Installed)
-            rules.Add(new("docker-cache", "Cache antigo do Docker", "Builder padrão do contexto local; sem uso há 7 dias. Imagens, containers e volumes são preservados.",
-                CleanupKind.DockerCache, null, true, 7));
+        // Docker is always listed: a missing CLI or a stopped daemon must be visible, not silently skipped.
+        rules.Add(DockerRule);
         rules.Add(new("system", "Armazenamento do sistema", "Revise aplicativos, atualizações e arquivos pessoais nas ferramentas do sistema.",
             CleanupKind.SystemStorage, null, false));
         return rules;
     }
+    public static CleanupRule DockerRule { get; } = new("docker-cache", "Cache antigo do Docker",
+        "Builder do daemon no contexto local selecionado; somente cache sem uso há 7 dias. Imagens, containers e volumes são preservados.",
+        CleanupKind.DockerCache, null, true, 7);
     public static bool AcceptCacheRoot(string path, PlatformContext p)
     {
         if (string.IsNullOrWhiteSpace(path) || path.Contains('\n') || !Path.IsPathFullyQualified(path)) return false;

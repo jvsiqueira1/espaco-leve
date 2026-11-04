@@ -32,7 +32,8 @@ No Linux, são necessárias bibliotecas do ambiente gráfico, como libX11, libIC
 | Temporários do usuário, Windows/macOS | Automático: criação e alteração anteriores a 14 dias; proteções adicionais |
 | Logs do npm | Automático: anteriores a 30 dias |
 | Logs específicos do AnyViewer, se encontrado no Windows | Automático: apenas nomes avcore.txt antigos e acessíveis |
-| Cache Docker local, builder padrão | Automático: somente cache sem uso há 7 dias |
+| Docker local: imagens, containers, volumes, cache de build e disco virtual | Inventário; automático só para o cache do builder do daemon sem uso há 7 dias |
+| Outros builders Buildx locais em execução | Revisão manual: somente cache sem uso há 7 dias |
 | npm, pnpm, pip, uv e Go | Consulta a ferramenta para descobrir a pasta; limpeza oficial após confirmação |
 | Cache do Chrome/Edge, perfil padrão | Estimativa e abertura da pasta para revisão manual |
 | Miniaturas no Linux, Homebrew no macOS | Estimativa e revisão manual |
@@ -41,7 +42,7 @@ No Linux, são necessárias bibliotecas do ambiente gráfico, como libX11, libIC
 
 Só aparecem os locais encontrados. Caches personalizados são aceitos apenas em pastas dedicadas dentro do perfil/cache do usuário; caminhos compartilhados, pastas pessoais protegidas e links são recusados. O programa não busca indiscriminadamente em todos os discos nem adiciona pastas arbitrárias à limpeza.
 
-Os tamanhos são estimativas lógicas. Podem se sobrepor, incluir arquivos que não serão removidos ou diferir do espaço efetivamente recuperado. Uma análise tem limite de 250 mil arquivos ou 45 segundos por categoria e identifica resultados parciais. A soma de arquivos elegíveis exclui Docker e itens de revisão.
+Os tamanhos são estimativas lógicas. Podem se sobrepor, incluir arquivos que não serão removidos ou diferir do espaço efetivamente recuperado. Uma análise tem limite de 250 mil arquivos ou 45 segundos por categoria e identifica resultados parciais. A soma de arquivos elegíveis exclui Docker e itens de revisão; o Docker tem métrica e seção próprias. Tamanho que não pôde ser medido aparece como **Desconhecido**, nunca como zero.
 
 ## Rotina semanal
 
@@ -62,7 +63,17 @@ No Windows, a remoção usa o mesmo identificador de arquivo, com acesso exclusi
 
 Bloqueios no Unix são cooperativos: programas que não os respeitam ainda podem escrever simultaneamente. Proteções de arquivo não substituem backups. Comandos de limpeza de pacotes seguem as regras das próprias ferramentas e exigem revisão; o aplicativo não aplica seu filtro de extensões ao conteúdo interno desses caches.
 
-Docker usa explicitamente um contexto local com socket Unix ou pipe Windows; contextos SSH/TCP são ignorados. Limpa apenas o builder padrão do daemon, sem remover imagens, containers ou volumes e sem iniciar/parar Docker Desktop. Builders buildx adicionais não são varridos. A limpeza interna pode não reduzir imediatamente o disco virtual. A compactação específica da primeira versão Windows não faz parte desta base multiplataforma.
+### Docker
+
+- **CLI:** procurada sem shell nem arquivos de inicialização do usuário, nesta ordem: caminho escolhido em Configurações (validado com `docker version` antes de salvar), PATH do processo e locais conhecidos. No macOS: `~/.docker/bin/docker`, `Docker.app` em /Applications e ~/Applications, `/usr/local/bin/docker`, `/opt/homebrew/bin/docker` e `~/.orbstack/bin/docker`; no Windows, `C:\Program Files\Docker\Docker\resources\bin\docker.exe`. Links são seguidos e o destino precisa ser um arquivo executável que responda com JSON. Apps abertos pelo Finder recebem um PATH mínimo; por isso os locais conhecidos são necessários. A descoberta é refeita a cada análise.
+- **Destino:** segue a precedência da CLI oficial: `--context`/`--host`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `currentContext` em `$DOCKER_CONFIG/config.json` (padrão `~/.docker/config.json`) e o contexto `default`. Só endpoints `unix://` e `npipe://` locais são analisados. O destino é fixado em cada comando (`--context` ou `-H`) e conferido de novo imediatamente antes de limpar; se mudou, nada é removido.
+- **Análise:** somente leitura (`docker version`, `context ls/inspect`, `system df`, `buildx version`, `buildx ls`, `buildx du`). Builders com algum nó remoto ou não comprovado não são consultados; builders parados aparecem com uso desconhecido e nunca são iniciados. Aliases do mesmo backend (por exemplo `default` e `desktop-linux`) são contados uma vez: pelos IDs dos nós ou, em versões do buildx sem IDs, resolvendo os links do socket (`/var/run/docker.sock` → socket do Docker Desktop/OrbStack). Quando não dá para comprovar que outro builder docker local é um daemon diferente, ele é mostrado, mas não é somado ao total (que fica desconhecido) nem oferecido para limpeza; o cache de um builder docker-container guardado em volume do mesmo daemon não é somado de novo. "Elegível" é o cache sem uso há pelo menos 7 dias, sem registros em uso ou compartilhados.
+- **Limpeza:** a rotina semanal executa apenas `docker --context <local> buildx prune --builder <builder do daemon> --filter until=168h --force` (com `BUILDX_BUILDER` fixado no mesmo builder), respeitando a categoria em Configurações. O builder é o do driver docker do próprio daemon analisado (mesmo nome do contexto, ou `default` com `-H`), comprovadamente local e em execução, conferido de novo imediatamente antes. `docker builder prune` não é usado: a CLI o encaminha ao buildx, que limparia o builder corrente (de `BUILDX_BUILDER` ou `docker buildx use`), possivelmente remoto. Outros builders locais em execução podem ser limpos em Revisar itens com `docker buildx prune --builder <nome> --filter until=168h --force`. Imagens, containers e volumes são só inventariados: o app nunca executa `system prune`, `--all`, `--volumes`, remoção de imagens/containers/volumes, reset do Docker Desktop nem containers privilegiados, e não inicia nem para o Docker. Limpeza adiada (Docker parado) ou bloqueada (destino ou builder mudou, remoto, CLI ausente, builder do daemon não comprovado) aparece como pendência no histórico, não como sucesso. Quando o Docker não informa quanto removeu, o histórico mostra "quantidade não informada", não 0 B.
+- **Sem Docker:** se não há CLI, aplicativo nem disco virtual, a categoria continua visível com o estado neutro "Docker não encontrado", sem aviso de falha.
+- **Disco virtual (macOS):** mostra separadamente o tamanho lógico, o espaço alocado no Mac (blocos do arquivo esparso) e o uso informado pelo Docker, para `Docker.raw`/`Docker.qcow2` do Docker Desktop (local padrão, local lido de `settings-store.json`/`settings.json` ou arquivo informado em Configurações) e `data.img.raw` do OrbStack. O arquivo nunca é excluído, truncado ou recriado. Após a limpeza, o histórico separa o que foi removido dentro do Docker do que voltou ao disco do Mac (variação do espaço alocado, quando medida); o Docker pode levar alguns minutos para devolver o espaço.
+- **Diagnóstico:** a seção Docker da visão geral tem **Copiar diagnóstico**, com CLI encontrada e origem, versões, contexto/endpoint e origem da seleção, estado do daemon, Buildx, PATH do processo e os comandos executados.
+
+A compactação específica da primeira versão Windows não faz parte desta base multiplataforma.
 
 Não há limpeza de Registro, instalação de drivers, formatação, elevação de privilégios, telemetria ou envio de arquivos. Os comandos de ferramentas instaladas e a abertura dos aplicativos do sistema podem ter comportamento de rede próprio.
 
@@ -97,8 +108,9 @@ Opções de diagnóstico:
     dotnet run --project src/EspacoLeve.App -- --version
     dotnet run --project src/EspacoLeve.App -- --smoke-test
     dotnet run --project src/EspacoLeve.App -- --render-preview preview.png
+    dotnet run --project src/EspacoLeve.App -- --docker-diagnostic
 
-Os dois últimos usam dados de demonstração, configuração isolada e nenhuma limpeza. Os testes de exclusão usam somente fixtures isoladas em work/tests; nunca diretórios reais do usuário.
+`--smoke-test` e `--render-preview` usam dados de demonstração, configuração isolada e nenhuma limpeza; o smoke test percorre as páginas com os estados Docker de sucesso, falha e desconhecido. Para revisar outro estado ou trecho na prévia: `--docker-demo sucesso|falha|desconhecido`, `--render-page overview|review|history|settings` e `--render-scroll <pixels>`. `--docker-diagnostic` executa a mesma análise somente leitura da janela e imprime o diagnóstico; para comparar com um app aberto pelo Finder, rode-o com `env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin`. Os testes de exclusão usam somente fixtures isoladas em work/tests; nunca diretórios reais do usuário.
 
 O ícone tem como fonte assets/app.svg; após editá-lo, `node scripts/render-icon.mjs` (requer rsvg-convert, do librsvg) regenera assets/app.png e assets/app.ico, que são versionados e usados pelo build.
 

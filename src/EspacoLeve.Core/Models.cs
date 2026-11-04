@@ -1,26 +1,50 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace EspacoLeve.Core;
 
-public enum CleanupKind { OldFiles, NpmCache, PnpmStore, PipCache, UvCache, GoCache, DockerCache, InspectOnly, SystemStorage }
+public enum CleanupKind { OldFiles, NpmCache, PnpmStore, PipCache, UvCache, GoCache, DockerCache, InspectOnly, SystemStorage, DockerBuilderCache }
 
 public sealed record CleanupRule(string Id, string Title, string Description, CleanupKind Kind,
     string? Root, bool Automatic, int RetentionDays = 0, string[]? FilePrefixes = null);
 
-public sealed record ScanRow(CleanupRule Rule, long Bytes, int Files, int Skipped, string Status)
+/// <summary>Bytes nulo significa tamanho desconhecido (falha ou consulta impossível), nunca zero.</summary>
+public sealed record ScanRow(CleanupRule Rule, long? Bytes, int Files, int Skipped, string Status)
 {
     public bool EstimateOnly => Rule.Kind != CleanupKind.OldFiles;
+    public DockerScan? Docker { get; init; }
 }
+
+public enum CleanupStatus { Succeeded, Failed, Deferred, Blocked, NotApplicable }
 
 public sealed class CleanupResult
 {
+    CleanupStatus status = CleanupStatus.Succeeded;
+    bool explicitStatus;
     public string Title { get; set; } = "";
-    public long RemovedBytes { get; set; }
+    /// <summary>Bytes removidos; null quando a ferramenta não informou a quantidade (desconhecido, nunca zero).</summary>
+    public long? RemovedBytes { get; set; } = 0;
     public int RemovedFiles { get; set; }
     public int Skipped { get; set; }
-    public bool Success { get; set; } = true;
+    /// <summary>Adiada, bloqueada ou impossível nunca conta como sucesso.</summary>
+    public CleanupStatus Status { get => status; set { status = value; explicitStatus = true; } }
+    /// <summary>Compatível com history.json antigo, que só tinha Success. Depois de Status, é somente leitura.</summary>
+    public bool Success
+    {
+        get => status == CleanupStatus.Succeeded;
+        set { if (!explicitStatus) status = value ? CleanupStatus.Succeeded : CleanupStatus.Failed; }
+    }
+    [JsonIgnore] public bool LegacyStatus => !explicitStatus;
     public string Message { get; set; } = "";
+    public static string Label(CleanupStatus status) => status switch
+    {
+        CleanupStatus.Succeeded => "concluída",
+        CleanupStatus.Failed => "falhou",
+        CleanupStatus.Deferred => "adiada",
+        CleanupStatus.Blocked => "bloqueada",
+        _ => "não aplicável"
+    };
 }
 
 public sealed class HistoryEntry
@@ -28,8 +52,13 @@ public sealed class HistoryEntry
     public DateTimeOffset Time { get; set; } = DateTimeOffset.UtcNow;
     public string Trigger { get; set; } = "";
     public List<CleanupResult> Results { get; set; } = [];
-    public long RemovedBytes => Results.Sum(x => x.RemovedBytes);
-    public bool Success => Results.All(x => x.Success);
+    /// <summary>Soma do que foi informado. Veja <see cref="RemovedUnknown"/> para limpezas sem quantidade informada.</summary>
+    public long RemovedBytes => Results.Sum(x => x.RemovedBytes ?? 0);
+    public bool RemovedUnknown => Results.Any(x => x.Status == CleanupStatus.Succeeded && x.RemovedBytes is null);
+    /// <summary>"Removidos: 1,5 GB", "Removidos: 1,5 GB + quantidade não informada" ou "Removidos: quantidade não informada".</summary>
+    public string RemovedText => "Removidos: " + (!RemovedUnknown ? Format.Bytes(RemovedBytes) :
+        RemovedBytes > 0 ? Format.Bytes(RemovedBytes) + " + quantidade não informada" : "quantidade não informada");
+    public bool Success => Results.All(x => x.Status is CleanupStatus.Succeeded or CleanupStatus.NotApplicable);
 }
 
 public sealed class AppSettings
@@ -52,6 +81,10 @@ public sealed class AppSettings
     public DateTimeOffset? LastDockerAlertUtc { get; set; }
     public bool UpdateCheckEnabled { get; set; } = true;
     public string? SkippedUpdateVersion { get; set; }
+    /// <summary>CLI do Docker escolhida pelo usuário; tem prioridade sobre o PATH e os locais conhecidos.</summary>
+    public string? DockerCliPath { get; set; }
+    /// <summary>Disco virtual do Docker informado pelo usuário; somente lido.</summary>
+    public string? DockerDiskImagePath { get; set; }
 
     public void Validate()
     {
@@ -62,6 +95,8 @@ public sealed class AppSettings
         TempRetentionDays = Math.Clamp(TempRetentionDays, 7, 90);
         LogRetentionDays = Math.Clamp(LogRetentionDays, 14, 180);
         DisabledRules ??= [];
+        if (string.IsNullOrWhiteSpace(DockerCliPath) || DockerCliPath.Contains('\n')) DockerCliPath = null;
+        if (string.IsNullOrWhiteSpace(DockerDiskImagePath) || DockerDiskImagePath.Contains('\n')) DockerDiskImagePath = null;
         try { _ = TimeZoneInfo.FindSystemTimeZoneById(TimeZoneId); }
         catch { TimeZoneId = TimeZoneInfo.Local.Id; }
         if (NextRunUtc == default) NextRunUtc = Schedule.Next(DateTimeOffset.UtcNow, this);
@@ -101,7 +136,15 @@ public sealed class DataStore
         settings.Validate();
         return settings;
     }
-    public List<HistoryEntry> LoadHistory() => Read<List<HistoryEntry>>("history.json") ?? [];
+    public List<HistoryEntry> LoadHistory()
+    {
+        var items = Read<List<HistoryEntry>>("history.json") ?? [];
+        // Versions up to 1.3.1 recorded a postponed Docker cleanup as a success.
+        foreach (var result in items.SelectMany(x => x.Results ?? []))
+            if (result.LegacyStatus && result.Success && result.Message.Contains("limpeza adiada", StringComparison.OrdinalIgnoreCase))
+                result.Status = CleanupStatus.Deferred;
+        return items;
+    }
     T? Read<T>(string name)
     {
         var path = Path.Combine(DirectoryPath, name);
@@ -132,6 +175,7 @@ public sealed class DataStore
 
 public static class Format
 {
+    public static string Size(long? bytes) => bytes is { } value ? Bytes(value) : "Desconhecido";
     public static string Bytes(long bytes)
     {
         var units = new[] { "B", "KB", "MB", "GB", "TB" };
