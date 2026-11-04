@@ -162,8 +162,14 @@ public sealed class MainWindow : Window
     }
     static Control Metric(string label, string value, string detail, IBrush? valueColor = null)
     {
-        var stack = Stack(8); stack.Children.Add(Text(label, 10, Muted, true)); stack.Children.Add(Text(value, 23, valueColor, true)); stack.Children.Add(Text(detail, 11, Muted));
+        var stack = Stack(8); stack.Children.Add(Text(label, 10, Muted, true)); stack.Children.Add(Value(value, 23, valueColor)); stack.Children.Add(Text(detail, 11, Muted));
         return Card(stack);
+    }
+    // A card value stays on one line: in narrow columns it shrinks instead of breaking mid-word ("Desconhecid"/"o").
+    static Control Value(string value, double size, IBrush? color = null)
+    {
+        var text = Text(value, size, color, true); text.TextWrapping = TextWrapping.NoWrap;
+        return new Viewbox { Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, HorizontalAlignment = HorizontalAlignment.Left, Child = text };
     }
     DockerScan? DockerScanOf() => app.Rows.FirstOrDefault(x => x.Rule.Kind == CleanupKind.DockerCache)?.Docker;
     static Border Notice(Control child, bool warning) => new()
@@ -174,7 +180,7 @@ public sealed class MainWindow : Window
     static Control Pair(string label, string value, string? detail = null)
     {
         var stack = Stack(3);
-        stack.Children.Add(Text(label, 10, Muted, true)); stack.Children.Add(Text(value, 16, bold: true));
+        stack.Children.Add(Text(label, 10, Muted, true)); stack.Children.Add(Value(value, 16));
         if (detail is not null) stack.Children.Add(Text(detail, 11, Muted));
         return stack;
     }
@@ -462,8 +468,9 @@ public sealed class MainWindow : Window
     public void RenderPreview(string path)
     {
         ValidateViews();
-        // Optional for visual review: --render-page <id> and --render-scroll <pixels>.
+        // Optional for visual review: --render-page <id>, --render-scroll <pixels> and --render-width <pixels> (at least MinWidth).
         string? Option(string name) { var at = Array.IndexOf(Program.Arguments, name); return at >= 0 && at + 1 < Program.Arguments.Length ? Program.Arguments[at + 1] : null; }
+        if (double.TryParse(Option("--render-width"), System.Globalization.CultureInfo.InvariantCulture, out var width)) { Width = Math.Max(MinWidth, width); UpdateLayout(); }
         Navigate(Option("--render-page") ?? "overview"); UpdateLayout();
         if (double.TryParse(Option("--render-scroll"), System.Globalization.CultureInfo.InvariantCulture, out var offset) && offset > 0) { scroller.Offset = new Vector(0, offset); UpdateLayout(); }
         using var bitmap = new RenderTargetBitmap(new PixelSize((int)Bounds.Width, (int)Bounds.Height), new Vector(96, 96));
