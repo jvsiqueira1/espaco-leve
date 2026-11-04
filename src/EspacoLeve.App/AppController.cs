@@ -54,19 +54,25 @@ public sealed class AppController
         {
             var entry = await Cleaner.CleanAutomaticAsync(trigger, progress);
             Store.AddHistory(entry);
+            // Measure again so the overview shows what the cleanup actually changed.
+            Rows = await Cleaner.ScanAsync(progress);
             return (entry.Success ? "Limpeza concluída. " : "Limpeza concluída com itens pendentes. ") +
-                Format.Bytes(entry.RemovedBytes) + " removidos. Consulte o histórico.";
+                entry.RemovedText + ". Consulte o histórico.";
         });
     }
     public async Task Review(CleanupRule rule)
     {
         if (Busy || preview || PendingRestart) return;
-        await Operation(async _ =>
+        await Operation(async progress =>
         {
             var result = await Cleaner.ReviewCleanupAsync(rule);
             if (rule.Kind is not (CleanupKind.InspectOnly or CleanupKind.SystemStorage))
+            {
                 Store.AddHistory(new() { Trigger = "Revisão manual", Results = [result] });
-            return result.Success ? "Ação concluída. " + result.Message : "Não foi possível concluir: " + result.Message;
+                Rows = await Cleaner.ScanAsync(progress);
+            }
+            return result.Success ? "Ação concluída. " + result.Message :
+                "Não foi possível concluir (" + CleanupResult.Label(result.Status) + "): " + result.Message;
         });
     }
     async Task Operation(Func<IProgress<string>, Task<string>> action)
@@ -137,14 +143,97 @@ public sealed class AppController
         Settings.SkippedUpdateVersion = release.Version; Update = null;
         Save(); Announce($"A versão {release.Version} não será oferecida de novo. Use Verificar atualizações em Configurações quando quiser.");
     }
+    public async Task<string> SetDockerCli(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) { Settings.DockerCliPath = null; Save(); return "Detecção automática da CLI do Docker restaurada. Analise novamente."; }
+        var (valid, message) = await new DockerService(Settings).ValidateCli(path);
+        if (valid) { Settings.DockerCliPath = path.Trim(); Save(); }
+        return message;
+    }
+    public string SetDockerDisk(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) { Settings.DockerDiskImagePath = null; Save(); return "Detecção automática do disco virtual restaurada."; }
+        var (valid, message) = new DockerService(Settings).ValidateDiskImage(path);
+        if (valid) { Settings.DockerDiskImagePath = path.Trim(); Save(); }
+        return message;
+    }
+    public static readonly string[] DockerDemos = ["sucesso", "falha", "desconhecido", "ausente"];
+    public void ShowDockerDemo(string variant)
+    {
+        var scan = DemoDocker(variant);
+        Rows = [.. Rows.Where(x => x.Rule.Kind is not (CleanupKind.DockerCache or CleanupKind.DockerBuilderCache)),
+            CleanupService.DockerRow(Discovery.DockerRule, scan), .. CleanupService.BuilderRows(scan)];
+        Changed?.Invoke();
+    }
+    static DockerScan DemoDocker(string variant)
+    {
+        const long GB = 1_000_000_000;
+        if (variant == "ausente")
+            return new()
+            {
+                State = DockerState.NotFound, Problem = "Nenhuma instalação do Docker foi encontrada neste computador.",
+                Action = "Se você usa Docker, OrbStack ou Colima em outro local, indique a CLI em Configurações › Selecionar CLI…",
+                Diagnostic = new() { AppVersion = Program.Version, Os = "macOS (demonstração)", Architecture = "arm64", ProcessPath = "/usr/bin:/bin:/usr/sbin:/sbin" }
+            };
+        var scan = new DockerScan
+        {
+            Cli = new("/Users/demo/.docker/bin/docker", "/Applications/Docker.app/Contents/Resources/bin/docker", DockerCliSource.KnownLocation, "29.8.2", "desktop-linux"),
+            Target = new("desktop-linux", "unix:///Users/demo/.docker/run/docker.sock", DockerTargetOrigin.ConfigFile, true),
+            DesktopInstalled = true
+        };
+        var disk = new DockerDiskImage("Docker Desktop", "/Users/demo/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw", "local padrão",
+            494 * GB, variant == "falha" ? 231 * GB : 238 * GB, variant == "falha" ? null : 236 * GB,
+            variant == "falha" ? "Uso interno desconhecido: o Docker não respondeu." : "Uso informado por docker system df (imagens, containers, volumes e cache).",
+            "Arquivo esparso: o tamanho lógico é o limite configurado, não o espaço ocupado. O Espaço Leve nunca exclui, trunca ou recria este arquivo.");
+        scan.Disks = [disk];
+        scan.Diagnostic = new()
+        {
+            AppVersion = Program.Version, Os = "macOS (demonstração)", Architecture = "arm64", ProcessPath = "/usr/bin:/bin:/usr/sbin:/sbin",
+            CliPath = scan.Cli.Path, CliResolved = scan.Cli.ResolvedPath, CliSource = "local conhecido", ClientVersion = "29.8.2",
+            Target = scan.Target.Describe(), Installed = ["Docker Desktop (/Applications/Docker.app)"], BuildxVersion = "github.com/docker/buildx v0.37.2"
+        };
+        if (variant == "falha")
+        {
+            scan.State = DockerState.DaemonUnavailable;
+            scan.Problem = "O Docker não está em execução ou não aceita conexões em unix:///Users/demo/.docker/run/docker.sock.";
+            scan.Action = "Abra o Docker Desktop/OrbStack (ou inicie o serviço Docker) e analise novamente.";
+            scan.Diagnostic.Daemon = "Docker parado ou inacessível";
+            return scan;
+        }
+        scan.DaemonReachable = true; scan.Diagnostic.Daemon = "acessível"; scan.Diagnostic.ServerVersion = "29.8.2";
+        scan.Categories = [new("Images", "Imagens", 5_013_000_000, 1_605_000_000, 13, 8), new("Containers", "Containers", 4_735_000, 4_735_000, 35, 0),
+            new("Local Volumes", "Volumes locais", 231 * GB, 15_260_000_000, 389, 30), new("Build Cache", "Cache de build (daemon)", 950_000_000, 950_000_000, 42, 0)];
+        DockerBuilderNode Node(string name, string endpoint, string? resolved, string status, bool local) =>
+            new(name, endpoint, resolved, status, status == "running" ? ["n-" + name] : [], local, local ? "local" : "remoto (" + endpoint + ")");
+        var daemon = new DockerBuilder("desktop-linux", "docker", "running", [Node("desktop-linux", "desktop-linux", scan.Target.Endpoint, "running", true)]);
+        var ci = new DockerBuilder("ci-builder", "docker-container", variant == "desconhecido" ? "inactive" : "running",
+            [Node("ci-builder0", "desktop-linux", scan.Target.Endpoint, variant == "desconhecido" ? "inactive" : "running", true)]);
+        var remote = new DockerBuilder("cloud-team", "remote", "running", [Node("cloud-team0", "tcp://builder.example:1234", null, "running", false)]);
+        scan.Builders = [
+            new(daemon, ["default"], true, false, 950_000_000, 950_000_000, 610_000_000, 0, 42, "Mesmo daemon do contexto analisado: já contado em Cache de build."),
+            variant == "desconhecido"
+                ? new(ci, [], false, true, null, null, null, null, 0, "Builder inactive: uso desconhecido. O Espaço Leve não inicia builders.")
+                : new(ci, [], false, true, 214 * GB, 205 * GB, 198 * GB, 0, 1280, "Cache guardado em volume do mesmo daemon: já contado em Volumes locais."),
+            new(remote, [], false, false, null, null, null, null, 0, "Fora deste computador (cloud-team0: remoto). Não consultado nem limpo.")];
+        scan.Limitations = ["Builders remotos ou não comprovados ficam fora da análise e da limpeza."];
+        if (variant == "desconhecido")
+        {
+            scan.State = DockerState.Partial;
+            scan.Problem = "Parte do uso não pôde ser medida; os valores desconhecidos não foram tratados como zero.";
+            scan.Action = "Inicie os builders parados pelo Docker, se quiser medi-los, e analise novamente.";
+        }
+        else scan.State = DockerState.CompletedWithItems;
+        return scan;
+    }
     public void Demo()
     {
         Rows = [
             new(new("temp", "Temporários antigos", "Arquivos antigos, com documentos e recuperação preservados.", CleanupKind.OldFiles, null, true, 14), 384000000, 412, 6, "Pode limpar automaticamente"),
             new(new("npm-cache", "Cache de pacotes npm", "Os pacotes precisarão ser baixados novamente. Projetos são preservados.", CleanupKind.NpmCache, null, false), 2700000000, 5100, 0, "Requer revisão"),
-            new(new("docker-cache", "Cache antigo do Docker", "Somente cache sem uso há 7 dias do builder local.", CleanupKind.DockerCache, null, true, 7), 950000000, 0, 0, "Estimativa; sujeito à retenção de 7 dias"),
             new(new("downloads", "Pasta Downloads", "Pode conter arquivos pessoais. Apenas revisão manual.", CleanupKind.InspectOnly, null, false), 6300000000, 95, 0, "Somente análise")
         ];
+        var index = Array.IndexOf(Program.Arguments, "--docker-demo");
+        ShowDockerDemo(index >= 0 && index + 1 < Program.Arguments.Length ? Program.Arguments[index + 1] : "sucesso");
         var next = Updates.Parse(Program.Version) is { } current && current > new Version(0, 0, 0) ? new Version(current.Major, current.Minor + 1, 0).ToString(3) : "1.3.0";
         var demo = new Uri(Updates.Repository + "/releases/download/v" + next + "/");
         Update = new(next, Updates.AssetName(next, updater.Runtime ?? "osx-arm64"), demo, 0, demo);

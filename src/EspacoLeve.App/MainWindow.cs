@@ -3,16 +3,19 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Input.Platform;
 using Avalonia.Platform;
+using Avalonia.Platform.Storage;
 using EspacoLeve.Core;
 
 namespace EspacoLeve.App;
 
 public sealed class MainWindow : Window
 {
-    static readonly IBrush Ink = Brush.Parse("#132F35"), Muted = Brush.Parse("#61757B"), Teal = Brush.Parse("#087F75");
+    static readonly IBrush Ink = Brush.Parse("#132F35"), Muted = Brush.Parse("#61757B"), Teal = Brush.Parse("#087F75"), Warn = Brush.Parse("#9A4A00");
     readonly AppController app;
-    readonly ContentControl page = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch };
+    // Right margin keeps the overlay scrollbar from covering the last card column.
+    readonly ContentControl page = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(0, 0, 16, 0) };
     readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = Muted };
     readonly ProgressBar progress = new() { IsIndeterminate = true, Height = 3, IsVisible = false };
     readonly Button cancelScan = new() { Content = "Cancelar análise", IsVisible = false };
@@ -24,6 +27,7 @@ public sealed class MainWindow : Window
     readonly Button cancelUpdate = new() { Content = "Cancelar", Padding = new(14, 10), Background = Brushes.White, Foreground = Ink, CornerRadius = new(6), IsVisible = false };
     readonly List<Button> actions = [];
     readonly List<Button> nav = [];
+    readonly ScrollViewer scroller;
     string selected = "overview";
     int renderSignature;
     public MainWindow(AppController app)
@@ -68,7 +72,7 @@ public sealed class MainWindow : Window
         skipUpdate.Click += (_, _) => app.SkipUpdate();
         cancelUpdate.Click += (_, _) => app.CancelUpdate();
         DockPanel.SetDock(updateBanner, Dock.Top); main.Children.Add(updateBanner);
-        main.Children.Add(new ScrollViewer { Content = page, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled });
+        main.Children.Add(scroller = new ScrollViewer { Content = page, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled });
         Content = layout;
         app.Changed += Refresh;
         Navigate("overview");
@@ -130,27 +134,163 @@ public sealed class MainWindow : Window
         commands.Children.Add(Action("Analisar espaço", app.Scan, true));
         commands.Children.Add(Action("Limpar itens seguros", async () =>
         {
-            if (await Confirm("Limpar itens seguros?", "Remove apenas arquivos antigos das regras habilitadas e cache Docker sem uso há 7 dias. Consulte os critérios em Configurações."))
+            if (await Confirm("Limpar itens seguros?", "Remove apenas arquivos antigos das regras habilitadas e o cache de build do Docker sem uso há 7 dias, no builder do daemon local analisado. Imagens, containers e volumes são preservados. Consulte os critérios em Configurações."))
                 await app.Clean("Limpeza manual dos itens seguros");
         }));
         body.Children.Add(commands);
-        var cards = new Grid { ColumnDefinitions = new("*,*,*"), ColumnSpacing = 12, Margin = new Thickness(0, 6, 0, 16) };
+        var cards = new Grid { ColumnDefinitions = new("*,*,*,*"), ColumnSpacing = 12, Margin = new Thickness(0, 6, 0, 16) };
         var drive = DriveInfo.GetDrives().Where(x => x.IsReady && PathGuard.IsInside(x.RootDirectory.FullName, PlatformContext.Current.Home))
             .OrderByDescending(x => x.RootDirectory.FullName.Length).FirstOrDefault();
         cards.Children.Add(Metric("LIVRE NO DISCO", drive is null ? "—" : Format.Bytes(drive.AvailableFreeSpace), drive?.Name ?? "Disco do usuário"));
         var eligible = app.Rows.Where(x => x.Rule.Kind == CleanupKind.OldFiles && app.Cleaner.IsEnabled(x.Rule)).Sum(x => x.Bytes);
-        var estimate = Metric("ARQUIVOS ELEGÍVEIS", Format.Bytes(eligible), "Estimativa • exclui Docker"); Grid.SetColumn(estimate, 1); cards.Children.Add(estimate);
-        var next = Metric("ROTINA SEMANAL", app.Settings.AutomaticEnabled ? app.Settings.NextRunUtc.ToLocalTime().ToString("dd/MM HH:mm") : "Pausada", "Apenas itens seguros"); Grid.SetColumn(next, 2); cards.Children.Add(next);
+        var estimate = Metric("ARQUIVOS ELEGÍVEIS", Format.Bytes(eligible ?? 0), "Estimativa • sem Docker"); Grid.SetColumn(estimate, 1); cards.Children.Add(estimate);
+        var docker = DockerScanOf();
+        var dockerMetric = docker is null ? Metric("DOCKER · CACHE ELEGÍVEL", "—", "Ainda não analisado") :
+            docker.State == DockerState.NotFound ? Metric("DOCKER · CACHE ELEGÍVEL", "—", "Docker não encontrado") :
+            DockerText.IsFailure(docker.State) ? Metric("DOCKER · CACHE ELEGÍVEL", "Desconhecido", "Não foi possível analisar", Warn) :
+            Metric("DOCKER · CACHE ELEGÍVEL", Format.Size(docker.EligibleBytes), docker.TotalBytes is { } used ? Format.Bytes(used) + " em uso no Docker" : "Uso total desconhecido");
+        Grid.SetColumn(dockerMetric, 2); cards.Children.Add(dockerMetric);
+        var next = Metric("ROTINA SEMANAL", app.Settings.AutomaticEnabled ? app.Settings.NextRunUtc.ToLocalTime().ToString("dd/MM HH:mm") : "Pausada", "Apenas itens seguros"); Grid.SetColumn(next, 3); cards.Children.Add(next);
         body.Children.Add(cards);
+        body.Children.Add(DockerSection(docker));
         body.Children.Add(Text("Itens identificados", 18, bold: true));
         body.Children.Add(Text("Os tamanhos são estimativas e podem se sobrepor. O total de uma pasta não representa espaço seguro para remover.", 12, Muted));
+        var others = app.Rows.Where(x => x.Rule.Kind is not (CleanupKind.DockerCache or CleanupKind.DockerBuilderCache)).ToList();
         if (app.Rows.Count == 0) body.Children.Add(Card(Text("Nenhuma análise concluída. Use Analisar espaço para começar.", 14, Muted)));
-        foreach (var row in app.Rows) body.Children.Add(RuleCard(row));
+        foreach (var row in others) body.Children.Add(RuleCard(row));
         return body;
     }
-    static Control Metric(string label, string value, string detail)
+    static Control Metric(string label, string value, string detail, IBrush? valueColor = null)
     {
-        var stack = Stack(8); stack.Children.Add(Text(label, 10, Muted, true)); stack.Children.Add(Text(value, 23, bold: true)); stack.Children.Add(Text(detail, 11, Muted));
+        var stack = Stack(8); stack.Children.Add(Text(label, 10, Muted, true)); stack.Children.Add(Text(value, 23, valueColor, true)); stack.Children.Add(Text(detail, 11, Muted));
+        return Card(stack);
+    }
+    DockerScan? DockerScanOf() => app.Rows.FirstOrDefault(x => x.Rule.Kind == CleanupKind.DockerCache)?.Docker;
+    static Border Notice(Control child, bool warning) => new()
+    {
+        Background = Brush.Parse(warning ? "#FFF4E5" : "#EEF5F4"), BorderBrush = Brush.Parse(warning ? "#F0D2A8" : "#D3E5E2"),
+        BorderThickness = new(1), CornerRadius = new(8), Padding = new(14, 12), Child = child
+    };
+    static Control Pair(string label, string value, string? detail = null)
+    {
+        var stack = Stack(3);
+        stack.Children.Add(Text(label, 10, Muted, true)); stack.Children.Add(Text(value, 16, bold: true));
+        if (detail is not null) stack.Children.Add(Text(detail, 11, Muted));
+        return stack;
+    }
+    Control DockerSection(DockerScan? scan)
+    {
+        var stack = Stack(14);
+        var head = new Grid { ColumnDefinitions = new("*,Auto"), ColumnSpacing = 12 };
+        head.Children.Add(Text("Docker", 18, bold: true));
+        var failed = scan is not null && DockerText.IsFailure(scan.State);
+        var absent = scan?.State == DockerState.NotFound;
+        var chip = Text(scan is null ? "Não analisado" : DockerText.Label(scan.State), 12, failed || scan?.State == DockerState.Partial ? Warn : absent ? Muted : Teal, true);
+        chip.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(chip, 1); head.Children.Add(chip);
+        stack.Children.Add(head);
+        if (scan is null)
+        {
+            stack.Children.Add(Text("Use Analisar espaço para medir imagens, containers, volumes, cache de build e o disco virtual. A análise só lê informações.", 12, Muted));
+            return Card(stack);
+        }
+        var where = scan.Cli is null ? "CLI não encontrada" : "CLI " + scan.Cli.Path + " (" + DockerText.Source(scan.Cli.Source) + ")";
+        if (scan.Target is not null) where += " · " + scan.Target.Describe();
+        stack.Children.Add(Text(where, 11, Muted));
+        if (absent)
+        {
+            // Neutral: nothing suggests Docker is used here, so there is nothing to fix.
+            var info = Stack(6);
+            info.Children.Add(Text(scan.Problem, 12));
+            info.Children.Add(Text(scan.Action, 12, Muted));
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            buttons.Children.Add(Action("Selecionar CLI…", () => { Navigate("settings"); return Task.CompletedTask; }));
+            info.Children.Add(buttons);
+            stack.Children.Add(Notice(info, false));
+        }
+        else if (failed || scan.State == DockerState.Partial)
+        {
+            var problem = Stack(6);
+            problem.Children.Add(Text(failed ? "Não foi possível analisar" : "Análise parcial", 14, Warn, true));
+            problem.Children.Add(Text(scan.Problem, 12));
+            if (scan.Action.Length > 0) problem.Children.Add(Text("O que fazer: " + scan.Action, 12, Muted));
+            foreach (var limit in scan.Limitations) problem.Children.Add(Text("• " + limit, 11, Muted));
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            buttons.Children.Add(Action("Analisar novamente", app.Scan));
+            if (scan.State is DockerState.CliMissing or DockerState.TimedOut)
+                buttons.Children.Add(Action("Selecionar CLI…", () => { Navigate("settings"); return Task.CompletedTask; }));
+            problem.Children.Add(buttons);
+            stack.Children.Add(Notice(problem, true));
+        }
+        if (scan.Categories.Count > 0)
+        {
+            var grid = new Grid { ColumnDefinitions = new("*,*,*,*"), ColumnSpacing = 12 };
+            var column = 0;
+            foreach (var category in scan.Categories.Take(4))
+            {
+                var pair = Pair(category.Title.ToUpperInvariant(), Format.Size(category.SizeBytes),
+                    (category.Type == "Build Cache" ? "recuperável " : "sem uso ") + Format.Size(category.ReclaimableBytes) + (category.Count is { } count ? " · " + count + " itens" : ""));
+                Grid.SetColumn(pair, column++); grid.Children.Add(pair);
+            }
+            stack.Children.Add(grid);
+            stack.Children.Add(Text("Imagens, containers e volumes são apenas inventariados: o Espaço Leve nunca os remove. \"Sem uso\" é o que o Docker considera recuperável, não uma recomendação.", 11, Muted));
+        }
+        if (!failed && !absent)
+        {
+            var eligible = Stack(4);
+            eligible.Children.Add(Text("Cache de build elegível pela retenção (sem uso há 7 dias): " + Format.Size(scan.EligibleBytes), 14, scan.EligibleBytes is null ? Warn : Teal, true));
+            eligible.Children.Add(Text("Builder do daemon na limpeza segura; outros builders locais em Revisar itens. Registros em uso ou compartilhados não contam." +
+                (scan.TotalBytes is { } total ? " Uso total informado pelo Docker: " + Format.Bytes(total) + "." : " Uso total desconhecido: há partes não medidas."), 11, Muted));
+            stack.Children.Add(Notice(eligible, false));
+        }
+        if (scan.Builders.Count > 0)
+        {
+            stack.Children.Add(Text("Builders", 14, bold: true));
+            foreach (var builder in scan.Builders)
+            {
+                var item = Stack(2);
+                var name = builder.Builder.Name + (builder.Aliases.Count > 0 ? " (mesmo backend: " + string.Join(", ", builder.Aliases) + ")" : "");
+                item.Children.Add(Text(name + " · " + builder.Builder.Driver + " · " + (builder.Builder.AllNodesLocal ? "local" : "fora deste computador") + " · " + builder.Builder.Status, 12, bold: true));
+                var outside = !builder.Builder.AllNodesLocal;
+                item.Children.Add(Text(outside ? "Não consultado: fora deste computador" : builder.TotalBytes is null ? "Uso desconhecido" :
+                    "Total " + Format.Size(builder.TotalBytes) + " · recuperável " + Format.Size(builder.ReclaimableBytes) + " · elegível " + Format.Size(builder.EligibleBytes),
+                    12, outside ? Muted : builder.TotalBytes is null ? Warn : Teal));
+                item.Children.Add(Text(builder.Note, 11, Muted));
+                stack.Children.Add(item);
+            }
+        }
+        if (scan.Disks.Count > 0)
+        {
+            stack.Children.Add(Text("Disco virtual", 14, bold: true));
+            foreach (var disk in scan.Disks)
+            {
+                var item = Stack(6);
+                item.Children.Add(Text(disk.Provider + " · " + disk.Origin, 12, bold: true));
+                item.Children.Add(Text(disk.Path, 10, Muted));
+                var grid = new Grid { ColumnDefinitions = new("*,*,*"), ColumnSpacing = 12 };
+                var logical = Pair("TAMANHO LÓGICO", Format.Size(disk.LogicalBytes), "limite do arquivo esparso");
+                var allocated = Pair("ALOCADO NO MAC", Format.Size(disk.AllocatedBytes), "espaço ocupado no disco"); Grid.SetColumn(allocated, 1);
+                var inside = Pair("USO INTERNO", Format.Size(disk.InternalBytes), "informado pelo Docker"); Grid.SetColumn(inside, 2);
+                grid.Children.Add(logical); grid.Children.Add(allocated); grid.Children.Add(inside);
+                item.Children.Add(grid);
+                item.Children.Add(Text(disk.InternalNote + " " + disk.Guidance, 11, Muted));
+                stack.Children.Add(item);
+            }
+        }
+        else if (OperatingSystem.IsMacOS() && !absent)
+            // Only macOS has virtual disk detection; on Windows, Docker Desktop keeps its disk in WSL and is not measured here.
+            stack.Children.Add(Text("Disco virtual não encontrado nos locais conhecidos. Se o Docker Desktop usa outro local (Settings › Resources › Advanced › Disk image location), informe o arquivo em Configurações.", 11, Muted));
+        var diagnostic = scan.Diagnostic.ToText();
+        var tools = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        tools.Children.Add(Action("Copiar diagnóstico", async () =>
+        {
+            if (TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard) { await clipboard.SetTextAsync(diagnostic); app.Announce("Diagnóstico do Docker copiado."); }
+        }));
+        stack.Children.Add(tools);
+        stack.Children.Add(new Expander
+        {
+            Header = "Ver diagnóstico", HorizontalAlignment = HorizontalAlignment.Stretch,
+            Content = new SelectableTextBlock { Text = diagnostic, FontSize = 11, FontFamily = new FontFamily("Menlo, Consolas, monospace"), TextWrapping = TextWrapping.Wrap, Foreground = Ink }
+        });
         return Card(stack);
     }
     Control RuleCard(ScanRow row)
@@ -158,7 +298,7 @@ public sealed class MainWindow : Window
         var stack = Stack(8);
         var grid = new Grid { ColumnDefinitions = new("*,Auto"), ColumnSpacing = 12 };
         grid.Children.Add(Text(row.Rule.Title, 16, bold: true));
-        var size = Text(Format.Bytes(row.Bytes), 17, Teal, true); Grid.SetColumn(size, 1); grid.Children.Add(size); stack.Children.Add(grid);
+        var size = Text(Format.Size(row.Bytes), 17, row.Bytes is null ? Warn : Teal, true); Grid.SetColumn(size, 1); grid.Children.Add(size); stack.Children.Add(grid);
         stack.Children.Add(Text(row.Rule.Description, 12, Muted));
         stack.Children.Add(Text(row.Status + (row.Skipped > 0 ? $" · {row.Skipped} itens inacessíveis/protegidos" : ""), 11, Teal));
         if (row.Rule.Root is not null) stack.Children.Add(Text(row.Rule.Root, 10, Muted));
@@ -166,7 +306,8 @@ public sealed class MainWindow : Window
             stack.Children.Add(Action(row.Rule.Kind is CleanupKind.InspectOnly or CleanupKind.SystemStorage ? "Abrir para revisar" : "Revisar limpeza", async () =>
             {
                 if (row.Rule.Kind is CleanupKind.InspectOnly or CleanupKind.SystemStorage ||
-                    await Confirm(row.Rule.Title, row.Rule.Description + "\n\nEstimativa: " + Format.Bytes(row.Bytes) + "\n" + row.Rule.Root))
+                    await Confirm(row.Rule.Title, row.Rule.Description + "\n\nEstimativa: " + Format.Size(row.Bytes) + "\n" + (row.Rule.Root ??
+                        (row.Rule.Kind == CleanupKind.DockerBuilderCache ? "O destino e os nós do builder são conferidos de novo antes de limpar; se mudarem, nada é removido." : ""))))
                     await app.Review(row.Rule);
             }));
         return Card(stack);
@@ -174,6 +315,8 @@ public sealed class MainWindow : Window
     Control ReviewPage()
     {
         var body = Heading("Você decide o que sai", "Caches podem ser recriados. Arquivos pessoais precisam da sua revisão.");
+        if (app.Rows.Any(x => x.Rule.Kind == CleanupKind.DockerBuilderCache))
+            body.Children.Add(Text("Builders Docker locais: só o cache sem uso há 7 dias é removido, com o destino conferido de novo. Builders remotos ou parados não aparecem aqui.", 12, Muted));
         foreach (var row in app.Rows.Where(x => !x.Rule.Automatic)) body.Children.Add(RuleCard(row));
         if (app.Rows.Count == 0) body.Children.Add(Card(Text("Conclua uma análise para ver os itens disponíveis.")));
         return body;
@@ -187,8 +330,10 @@ public sealed class MainWindow : Window
         {
             var stack = Stack(10);
             stack.Children.Add(Text(entry.Time.ToLocalTime().ToString("dd/MM/yyyy HH:mm") + "  ·  " + entry.Trigger, 15, bold: true));
-            stack.Children.Add(Text(Format.Bytes(entry.RemovedBytes) + (entry.Success ? " removidos" : " removidos · há pendências"), 14, Teal));
-            foreach (var result in entry.Results) stack.Children.Add(Text(result.Title + ": " + result.Message, 12, Muted));
+            stack.Children.Add(Text(entry.RemovedText + (entry.Success ? "" : " · há pendências"), 14, Teal));
+            foreach (var result in entry.Results)
+                stack.Children.Add(Text(result.Title + " (" + CleanupResult.Label(result.Status) + "): " + result.Message, 12,
+                    result.Status is CleanupStatus.Succeeded or CleanupStatus.NotApplicable ? Muted : Warn));
             body.Children.Add(Card(stack));
         }
         return body;
@@ -219,6 +364,23 @@ public sealed class MainWindow : Window
             form.Children.Add(check); checks.Add((row.Rule, check));
         }
         form.Children.Add(Text("Caches de pacotes, navegadores, Downloads e lixeira ficam fora da rotina. A rotina pendente é executada ao abrir o app após o horário agendado.", 12, Muted));
+        form.Children.Add(Text("Docker", 15, bold: true));
+        var current = DockerScanOf()?.Cli;
+        form.Children.Add(Text(current is null ? "CLI em uso: não encontrada na última análise." : "CLI em uso: " + current.Path + " (" + DockerText.Source(current.Source) + ")", 12, Muted));
+        var cliPath = new TextBox { Text = app.Settings.DockerCliPath ?? "", PlaceholderText = "Detecção automática (ex.: ~/.docker/bin/docker)", MinWidth = 420, HorizontalAlignment = HorizontalAlignment.Left };
+        form.Children.Add(Text("CLI do Docker", 13)); form.Children.Add(cliPath);
+        var cliRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        cliRow.Children.Add(Action("Selecionar CLI…", async () => { if (await PickFile("Selecionar a CLI do Docker") is { } picked) cliPath.Text = picked; }));
+        cliRow.Children.Add(Action("Validar e salvar", async () => app.Announce(await app.SetDockerCli(cliPath.Text))));
+        cliRow.Children.Add(Action("Usar detecção automática", async () => { cliPath.Text = ""; app.Announce(await app.SetDockerCli(null)); }));
+        form.Children.Add(cliRow);
+        var diskPath = new TextBox { Text = app.Settings.DockerDiskImagePath ?? "", PlaceholderText = "Detecção automática do Docker.raw / data.img.raw", MinWidth = 420, HorizontalAlignment = HorizontalAlignment.Left };
+        form.Children.Add(Text("Disco virtual (opcional, somente leitura)", 13)); form.Children.Add(diskPath);
+        var diskRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        diskRow.Children.Add(Action("Selecionar arquivo…", async () => { if (await PickFile("Selecionar o disco virtual do Docker") is { } picked) diskPath.Text = picked; }));
+        diskRow.Children.Add(Action("Validar e salvar", () => { app.Announce(app.SetDockerDisk(diskPath.Text)); return Task.CompletedTask; }));
+        form.Children.Add(diskRow);
+        form.Children.Add(Text("A CLI é validada com docker version antes de ser salva. No Docker Desktop, o local do disco aparece em Settings › Resources › Advanced › Disk image location. O disco nunca é alterado.", 11, Muted));
         form.Children.Add(Text("Atualizações", 15, bold: true));
         var updates = new CheckBox { Content = "Procurar novas versões automaticamente", IsChecked = app.Settings.UpdateCheckEnabled };
         form.Children.Add(updates);
@@ -258,6 +420,11 @@ public sealed class MainWindow : Window
         body.Children.Add(Text("Configuração e histórico: " + app.Store.DirectoryPath, 11, Muted));
         return body;
     }
+    async Task<string?> PickFile(string title)
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = title, AllowMultiple = false });
+        return files.Count == 0 ? null : files[0].TryGetLocalPath();
+    }
     async Task<bool> Confirm(string title, string description)
     {
         var dialog = new Window { Title = title, Width = 530, SizeToContent = SizeToContent.Height, CanResize = false, WindowStartupLocation = WindowStartupLocation.CenterOwner, Background = Brushes.White };
@@ -274,16 +441,31 @@ public sealed class MainWindow : Window
     }
     public void ValidateViews()
     {
-        foreach (var id in new[] { "overview", "review", "history", "settings" })
+        foreach (var variant in AppController.DockerDemos)
         {
-            Navigate(id); UpdateLayout();
-            if (page.Bounds.Width < 100 || page.Bounds.Height < 100) throw new InvalidOperationException("Página sem conteúdo: " + id);
+            app.ShowDockerDemo(variant);
+            foreach (var id in new[] { "overview", "review", "history", "settings" })
+            {
+                Navigate(id); UpdateLayout();
+                if (page.Bounds.Width < 100 || page.Bounds.Height < 100) throw new InvalidOperationException("Página sem conteúdo: " + id + " (Docker " + variant + ")");
+            }
+            var scan = DockerScanOf() ?? throw new InvalidOperationException("Seção Docker ausente: " + variant);
+            if (variant == "falha" && (scan.EligibleBytes is not null || app.Rows.First(x => x.Rule.Kind == CleanupKind.DockerCache).Bytes is not null))
+                throw new InvalidOperationException("Falha do Docker exibida como zero.");
+            if (variant == "desconhecido" && scan.EligibleBytes is not null) throw new InvalidOperationException("Uso desconhecido exibido como valor.");
+            if (variant == "ausente" && (DockerText.IsFailure(scan.State) || app.Rows.First(x => x.Rule.Kind == CleanupKind.DockerCache).Bytes is not null))
+                throw new InvalidOperationException("Docker ausente exibido como falha ou zero.");
         }
+        var index = Array.IndexOf(Program.Arguments, "--docker-demo");
+        app.ShowDockerDemo(index >= 0 && index + 1 < Program.Arguments.Length ? Program.Arguments[index + 1] : "sucesso");
     }
     public void RenderPreview(string path)
     {
         ValidateViews();
-        Navigate("overview"); UpdateLayout();
+        // Optional for visual review: --render-page <id> and --render-scroll <pixels>.
+        string? Option(string name) { var at = Array.IndexOf(Program.Arguments, name); return at >= 0 && at + 1 < Program.Arguments.Length ? Program.Arguments[at + 1] : null; }
+        Navigate(Option("--render-page") ?? "overview"); UpdateLayout();
+        if (double.TryParse(Option("--render-scroll"), System.Globalization.CultureInfo.InvariantCulture, out var offset) && offset > 0) { scroller.Offset = new Vector(0, offset); UpdateLayout(); }
         using var bitmap = new RenderTargetBitmap(new PixelSize((int)Bounds.Width, (int)Bounds.Height), new Vector(96, 96));
         bitmap.Render(this); bitmap.Save(path, new PngBitmapEncoderOptions());
     }
