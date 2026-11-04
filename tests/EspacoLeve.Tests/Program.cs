@@ -103,9 +103,9 @@ Assert(!DockerService.IsLocalEndpoint("ssh://server") && !DockerService.IsLocalE
 Assert(DockerService.ParseBytes("21.76GB") == 21760000000, "interpret Docker decimal size correctly");
 // Real processes, but only harmless shell builtins: stdout and stderr stay apart, cancellation is not a timeout.
 var split = OperatingSystem.IsWindows()
-    ? await CommandRunner.Run("cmd.exe", ["/d", "/c", "echo {\"a\":1}& echo aviso 1>&2"], 20)
-    : await CommandRunner.Run("/bin/sh", ["-c", "echo '{\"a\":1}'; echo aviso >&2"], 20);
-Assert(split.Success && split.Stdout.Trim() == "{\"a\":1}" && split.Stderr == "aviso" && split.Output.Contains("aviso"), "keep stdout and stderr separate");
+    ? await CommandRunner.Run("cmd.exe", ["/d", "/c", "echo saida& echo aviso>&2"], 20)
+    : await CommandRunner.Run("/bin/sh", ["-c", "echo saida; echo aviso >&2"], 20);
+Assert(split.Success && split.Stdout.Trim() == "saida" && split.Stderr.Trim() == "aviso" && split.Output.Contains("aviso"), "keep stdout and stderr separate");
 string[] pause = OperatingSystem.IsWindows() ? ["/d", "/c", "ping -n 30 127.0.0.1 >nul"] : ["-c", "sleep 30"];
 var shell = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh";
 var timedOut = await CommandRunner.Run(shell, pause, 1, killTree: true);
